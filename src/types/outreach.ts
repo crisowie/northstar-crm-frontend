@@ -93,3 +93,36 @@ export interface OutreachStats {
   bounced: number;
   opened: number;
 }
+
+export interface OutreachThreadMessage {
+  id: string;
+  from: string;
+  to: string;
+  subject: string;
+  sentAt: string;
+  body: string;
+  direction: "sent" | "received";
+}
+
+export interface OutreachThread {
+  threadId: string | null;
+  source: "gmail" | "crm";
+  messages: OutreachThreadMessage[];
+}
+
+export interface CalendarMeeting {
+  id: string;
+  contactId?: string;
+  title: string;
+  attendeeName: string;
+  attendeeEmail: string;
+  startTime: string;
+  endTime: string;
+  location?: string;
+  status: "booked" | "cancelled" | "rescheduled";
+}
+
+export interface CalendarIntegrationSettings {
+  configured: boolean;
+  webhookUrl: string;
+}

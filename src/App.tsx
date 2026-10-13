@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Activity, Company, Contact, CrmAnalytics, CrmData, CrmNote, CrmTask, Job, Opportunity } from "./types";
 import { emptyWorkspace } from "./data/empty";
 import { getAnalytics, getWorkspace, isMockAuthEnabled, saveWorkspace } from "./data/api";
-import OutreachPage from "./outreach/OutreachPage";
+import OutreachPage, { OutreachConversationsDialog, OutreachThreadDialog } from "./outreach/OutreachPage";
 import EmailProvidersSettings from "./outreach/EmailProvidersSettings";
 import GroqDraftSettings from "./outreach/GroqDraftSettings";
-import { getOutreachMessages } from "./data/outreach";
-import type { OutreachMessage } from "./types/outreach";
+import { getCalendarMeetings, getOutreachMessages } from "./data/outreach";
+import type { CalendarMeeting, OutreachMessage } from "./types/outreach";
+import MeetingsPage from "./outreach/MeetingsPage";
 
 type Kind = "contact" | "company" | "job" | "opportunity" | "task";
-type Page = "Outreach" | "Dashboard" | "Contacts" | "Companies" | "Jobs" | "Opportunities" | "Tasks & Follow-ups" | "Activities" | "Settings";
+type Page = "Outreach" | "Dashboard" | "Contacts" | "Companies" | "Jobs" | "Opportunities" | "Tasks & Follow-ups" | "Meetings" | "Activities" | "Settings";
 type Field = { key: string; label: string; type?: string; options?: string[]; placeholder?: string; required?: boolean; wide?: boolean };
 type Column = { key: string; label: string; render?: (record: any) => React.ReactNode };
 
@@ -21,6 +22,7 @@ const nav: { page: Page; icon: string; group?: string }[] = [
   { page: "Jobs", icon: "briefcase" },
   { page: "Opportunities", icon: "target" },
   { page: "Tasks & Follow-ups", icon: "check" },
+  { page: "Meetings", icon: "calendar", group: "INSIGHTS" },
   { page: "Activities", icon: "activity", group: "INSIGHTS" },
   { page: "Settings", icon: "settings", group: "PREFERENCES" },
 ];
@@ -82,7 +84,7 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={iconPaths[name] || iconPaths.spark} /></svg>;
 }
 
-function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: string; onSignOut: () => void }) {
+function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: string; userEmail: string; onSignOut: () => void; onUpdateUserName: (name: string) => Promise<void> }) {
   const [data, setData] = useState<CrmData>(emptyWorkspace);
   const [metrics, setMetrics] = useState<CrmAnalytics>({ date: today(), totalContacts: 0, totalCompanies: 0, activeJobs: 0, openOpportunities: 0, needsAttention: 0, tasksDueToday: 0, overdueFollowUps: 0, wonLast30Days: 0, totalWon: 0, totalLost: 0, openOpportunityValue: 0, pipeline: [] });
   const [dataReady, setDataReady] = useState(false);
@@ -107,6 +109,11 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
   const [pipelineText, setPipelineText] = useState(data.pipelineStages.join("\n"));
   const [jobStatusText, setJobStatusText] = useState(data.jobStatuses.join("\n"));
   const [orgName, setOrgName] = useState(data.organization);
+  const [displayName, setDisplayName] = useState(userName);
+  const [profileName, setProfileName] = useState(userName);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [profileMessage, setProfileMessage] = useState("");
+  const [profileError, setProfileError] = useState("");
   const [dragged, setDragged] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
 
@@ -165,6 +172,31 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
   useEffect(() => { setLocalQuery(""); setFilter("All"); setPageNo(1); }, [page]);
 
   const notify = (message: string) => setToast(message);
+  useEffect(() => {
+    setDisplayName(userName);
+    setProfileName(userName);
+  }, [userName]);
+
+  const saveProfileName = async () => {
+    const name = profileName.trim();
+    if (!name) {
+      setProfileError("Enter a name before saving.");
+      return;
+    }
+    setProfileBusy(true);
+    setProfileError("");
+    setProfileMessage("");
+    try {
+      await onUpdateUserName(name);
+      setDisplayName(name);
+      setProfileName(name);
+      setProfileMessage("Your name has been updated.");
+    } catch (reason: unknown) {
+      setProfileError(reason instanceof Error ? reason.message : "Could not update your name.");
+    } finally {
+      setProfileBusy(false);
+    }
+  };
   const mutate = (fn: (copy: CrmData) => void) => setData((old) => {
     const copy = structuredClone(old);
     fn(copy);
@@ -264,6 +296,18 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
     });
     setDetail(null);
     notify(kindLabel[kind] + " archived");
+  };
+
+  const restoreRecord = (kind: Kind, record: any) => {
+    mutate((copy) => {
+      const item = (copy[plural[kind]] as any[]).find((row) => row.id === record.id);
+      if (!item) return;
+      item.archived = false;
+      addActivity(copy, "restore", kindLabel[kind] + " restored", getRecordLabel(kind, record.id), kind, record.id);
+    });
+    setDetail(null);
+    if (filter === "Archived") setFilter("All");
+    notify(kindLabel[kind] + " restored from archive");
   };
 
   const changeOpportunityStage = (opportunity: Opportunity, stage: string) => {
@@ -493,7 +537,7 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
     return text.includes(term);
   });
 
-  const memberInitials = initials(userName);
+  const memberInitials = initials(displayName);
   if (loadError) return <main className="workspace-state"><div className="workspace-state-card"><div className="brand-mark"><span className="brand-star">✦</span></div><h1>Could not load your workspace</h1><p>{loadError}</p><div className="workspace-state-actions"><button className="button button-primary" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>Try again</button><button className="button button-secondary" onClick={onSignOut}>Sign out</button></div></div></main>;
   if (!dataReady) return <main className="workspace-state"><div className="workspace-loading"><span className="auth-spinner" /><span>Loading your workspace…</span></div></main>;
 
@@ -513,7 +557,7 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
         </nav>
         <div className="sidebar-bottom">
           <div className="demo-note"><span className={"sync-dot sync-" + syncState} /><span><strong>{isMockAuthEnabled ? "Local demo API" : "Supabase storage"}</strong><small>{syncState === "saving" ? "Saving changes…" : syncState === "error" ? "Sync needs attention" : "Changes synced"}</small></span></div>
-          <button className="user-switch" onClick={() => setMenu(menu === "profile" ? null : "profile")}><span className="avatar user-avatar">{memberInitials}</span><span><strong>{userName}</strong><small>Workspace member</small></span><Icon name="dots" size={17} /></button>
+          <button className="user-switch" onClick={() => setMenu(menu === "profile" ? null : "profile")}><span className="avatar user-avatar">{memberInitials}</span><span><strong>{displayName}</strong><small>Workspace member</small></span><Icon name="dots" size={17} /></button>
         </div>
       </aside>
 
@@ -532,19 +576,20 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
               {menu === "notifications" && <div className="header-popover notification-popover"><div className="popover-heading"><strong>Today</strong><span>{todayTasks.length} due</span></div>{todayTasks.length ? todayTasks.slice(0, 4).map((task) => <button className="notice-row" key={task.id} onClick={() => openDetail("task", task.id)}><span className="notice-icon"><Icon name="check" size={15} /></span><span><strong>{task.title}</strong><small>{fmtTime(task.dueDate)} · {getRecordLabel(task.recordType as Kind, task.recordId)}</small></span></button>) : <div className="empty-small">You’re all caught up for today.</div>}</div>}
             </div>
             <div className="top-menu-wrap">
-              <button className="top-profile" onClick={() => setMenu(menu === "profile" ? null : "profile")}><span className="avatar user-avatar">{memberInitials}</span><span>{userName}</span><Icon name="chevronDown" size={14} /></button>
-              {menu === "profile" && <div className="header-popover profile-popover"><div className="profile-popover-head"><span className="avatar user-avatar">{memberInitials}</span><span><strong>{userName}</strong><small>{userEmail}</small></span></div><button onClick={() => { setPage("Settings"); setMenu(null); }}>Profile & settings</button><button onClick={() => { setPage("Settings"); setMenu(null); }}>Workspace settings</button><button className="sign-out-button" onClick={onSignOut}>Sign out</button></div>}
+              <button className="top-profile" onClick={() => setMenu(menu === "profile" ? null : "profile")}><span className="avatar user-avatar">{memberInitials}</span><span>{displayName}</span><Icon name="chevronDown" size={14} /></button>
+              {menu === "profile" && <div className="header-popover profile-popover"><div className="profile-popover-head"><span className="avatar user-avatar">{memberInitials}</span><span><strong>{displayName}</strong><small>{userEmail}</small></span></div><button onClick={() => { setPage("Settings"); setMenu(null); }}>Profile & settings</button><button onClick={() => { setPage("Settings"); setMenu(null); }}>Workspace settings</button><button className="sign-out-button" onClick={onSignOut}>Sign out</button></div>}
             </div>
           </div>
         </header>
 
         <div className="content-area">
           <div className="page-topline"><div><div className="eyebrow">NORTHSTAR CRM <span className="mock-pill">PRIVATE WORKSPACE</span></div><h1>{page === "Tasks & Follow-ups" ? "Tasks & follow-ups" : page}</h1><p>{pageDescriptions[page]}</p></div>
-            {page !== "Dashboard" && page !== "Activities" && page !== "Settings" && page !== "Outreach" && <button className="button button-primary" onClick={() => addQuick(currentKind || "task")}><Icon name="plus" size={17} />{page === "Tasks & Follow-ups" ? "Add task" : "Add " + kindLabel[currentKind!].toLowerCase()}</button>}
+            {page !== "Dashboard" && page !== "Activities" && page !== "Settings" && page !== "Outreach" && page !== "Meetings" && <button className="button button-primary" onClick={() => addQuick(currentKind || "task")}><Icon name="plus" size={17} />{page === "Tasks & Follow-ups" ? "Add task" : "Add " + kindLabel[currentKind!].toLowerCase()}</button>}
           </div>
 
-          {page === "Outreach" && <OutreachPage data={data} senderName={userName} />}
-          {page === "Dashboard" && <Dashboard data={data} metrics={metrics} tasks={tasksForView.slice(0, 5)} userName={userName} syncState={syncState} onQuick={addQuick} onTask={openDetail} onPage={setPage} onOpportunity={(id) => openDetail("opportunity", id)} onActivity={(item) => openDetail(item.recordType as Kind, item.recordId)} />}
+          {page === "Outreach" && <OutreachPage data={data} senderName={displayName} />}
+          {page === "Dashboard" && <Dashboard data={data} metrics={metrics} userName={displayName} syncState={syncState} onQuick={addQuick} onPage={setPage} onActivity={(item) => openDetail(item.recordType as Kind, item.recordId)} />}
+          {page === "Meetings" && <MeetingsPage contacts={data.contacts} />}
 
           {currentKind && <section className="panel records-panel">
             <div className="panel-toolbar">
@@ -575,7 +620,8 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
           {page === "Activities" && <section className="panel activity-page-panel"><div className="panel-toolbar"><div><strong>Activity timeline</strong><span className="toolbar-subtitle">Recent record changes across your workspace</span></div><div className="table-search"><Icon name="search" size={16} /><input value={localQuery} onChange={(e) => setLocalQuery(e.target.value)} placeholder="Search activity..." /></div></div><ActivityList items={activityItems} onClick={(item) => openDetail(item.recordType as Kind, item.recordId)} getRecordLabel={getRecordLabel} /><div className="mock-footnote">New activity is added as your team updates records.</div></section>}
 
           {page === "Settings" && <div className="settings-grid">
-            <section className="panel settings-card"><div className="settings-title"><div className="settings-icon"><Icon name="building" /></div><div><h2>Organization</h2><p>Basic details for your workspace</p></div></div><label className="field-label">Workspace name<input className="form-input" value={orgName} onChange={(e) => setOrgName(e.target.value)} /></label><div className="settings-inline"><div><label className="field-label">Signed-in user</label><div className="readonly-field">{userName}</div></div><div><label className="field-label">Account</label><div className="readonly-field">{userEmail}</div></div></div></section>
+            <section className="panel settings-card"><div className="settings-title"><div className="settings-icon"><Icon name="building" /></div><div><h2>Organization</h2><p>Basic details for your workspace</p></div></div><label className="field-label">Workspace name<input className="form-input" value={orgName} onChange={(e) => setOrgName(e.target.value)} /></label></section>
+            <section className="panel settings-card"><div className="settings-title"><div className="settings-icon"><Icon name="users" /></div><div><h2>Your profile</h2><p>This name appears in the CRM and in email signatures.</p></div></div>{profileError && <div className="outreach-message error-message" role="alert">{profileError}</div>}{profileMessage && <div className="outreach-message success-message" role="status">{profileMessage}</div>}<label className="field-label">Signed-in name<input className="form-input" value={profileName} maxLength={100} onChange={(event) => { setProfileName(event.target.value); setProfileMessage(""); setProfileError(""); }} /></label><div className="settings-inline"><div><label className="field-label">Account email</label><div className="readonly-field">{userEmail}</div></div><div className="settings-profile-save"><button className="button button-primary" disabled={profileBusy || !profileName.trim() || profileName.trim() === displayName} onClick={() => void saveProfileName()}>{profileBusy ? "Saving…" : "Save name"}</button></div></div></section>
             <section className="panel settings-card"><div className="settings-title"><div className="settings-icon"><Icon name="target" /></div><div><h2>Opportunity pipeline</h2><p>One stage per line. Order controls the board.</p></div></div><label className="field-label">Stages<textarea className="form-input settings-textarea" value={pipelineText} onChange={(e) => setPipelineText(e.target.value)} /></label><span className="field-help">Keep Won and Lost as the close stages. Stages with existing records stay visible.</span></section>
             <section className="panel settings-card"><div className="settings-title"><div className="settings-icon"><Icon name="briefcase" /></div><div><h2>Job statuses</h2><p>Configure the columns in the jobs board.</p></div></div><label className="field-label">Statuses<textarea className="form-input settings-textarea" value={jobStatusText} onChange={(e) => setJobStatusText(e.target.value)} /></label><span className="field-help">Keep Completed and Cancelled. Statuses with existing jobs stay visible.</span></section>
             <section className="panel settings-card"><div className="settings-title"><div className="settings-icon"><Icon name="download" /></div><div><h2>Data & storage</h2><p>Your private CRM workspace</p></div></div><div className="storage-callout"><span className={"sync-dot sync-" + syncState} /><span><strong>{syncState === "error" ? "Sync needs attention" : syncState === "saving" ? (isMockAuthEnabled ? "Saving through local API" : "Saving to Supabase") : (isMockAuthEnabled ? "Saved through local API" : "Stored in Supabase")}</strong><small>{syncState === "error" ? "Your latest change could not be saved. Check the API connection and try editing again." : isMockAuthEnabled ? "Demo records are saved by the NestJS API under the local demo identity." : "Records are associated with your signed-in account and saved through the NestJS API."}</small></span></div><div className="settings-actions"><button className="button button-secondary" onClick={exportData}><Icon name="download" size={16} />Export JSON</button></div></section>
@@ -588,7 +634,7 @@ function App({ userName, userEmail, onSignOut }: { userName: string; userEmail: 
 
       {menu === "profile" && <button className="dismiss-overlay" aria-label="Close menu" onClick={() => setMenu(null)} />}
       {dialog && <RecordDialog kind={dialog.kind} record={dialog.record} data={data} onClose={() => setDialog(null)} onSave={(form) => persistRecord(dialog.kind, form, dialog.record)} />}
-      {detail && activeDetail && <DetailPanel kind={detail.kind} record={activeDetail} data={data} notes={data.notes.filter((note) => note.recordType === detail.kind && note.recordId === detail.id)} activities={data.activities.filter((item) => item.recordType === detail.kind && item.recordId === detail.id)} getRecordLabel={getRecordLabel} onClose={() => setDetail(null)} onEdit={() => setDialog({ kind: detail.kind, record: activeDetail })} onArchive={() => archiveRecord(detail.kind, activeDetail)} onNote={addNote} noteText={noteText} setNoteText={setNoteText} onOpen={openDetail} onStage={(stage) => detail.kind === "opportunity" && changeOpportunityStage(activeDetail, stage)} onCreateJob={() => detail.kind === "opportunity" && createJobFromOpportunity(activeDetail)} onTaskStatus={(status) => detail.kind === "task" && updateTaskStatus(activeDetail, status)} />}
+      {detail && activeDetail && <DetailPanel kind={detail.kind} record={activeDetail} data={data} senderName={displayName} notes={data.notes.filter((note) => note.recordType === detail.kind && note.recordId === detail.id)} activities={data.activities.filter((item) => item.recordType === detail.kind && item.recordId === detail.id)} getRecordLabel={getRecordLabel} onClose={() => setDetail(null)} onEdit={() => setDialog({ kind: detail.kind, record: activeDetail })} onArchive={() => archiveRecord(detail.kind, activeDetail)} onRestore={() => restoreRecord(detail.kind, activeDetail)} onNote={addNote} noteText={noteText} setNoteText={setNoteText} onOpen={openDetail} onStage={(stage) => detail.kind === "opportunity" && changeOpportunityStage(activeDetail, stage)} onCreateJob={() => detail.kind === "opportunity" && createJobFromOpportunity(activeDetail)} onTaskStatus={(status) => detail.kind === "task" && updateTaskStatus(activeDetail, status)} />}
       {toast && <div className="toast"><span className="toast-check">✓</span>{toast}</div>}
     </div>
   );
@@ -602,6 +648,7 @@ const pageDescriptions: Record<Page, string> = {
   Jobs: "Track active work from kickoff through completion.",
   Opportunities: "Move potential work forward with a clear pipeline.",
   "Tasks & Follow-ups": "Keep your next steps visible and close the loop.",
+  Meetings: "Confirmed Cal.com bookings and upcoming conversations with contacts.",
   Activities: "A chronological view of what has changed across your CRM.",
   Settings: "Set up your workspace and tailor the CRM to your team.",
 };
@@ -617,13 +664,29 @@ function EmptyState({ title, detail, action }: { title: string; detail: string; 
   return <div className="empty-state"><div className="empty-icon"><Icon name="spark" size={21} /></div><strong>{title}</strong><p>{detail}</p>{action}</div>;
 }
 
-function Dashboard({ data, metrics, tasks, userName, syncState, onQuick, onTask, onPage, onOpportunity, onActivity }: { data: CrmData; metrics: CrmAnalytics; tasks: CrmTask[]; userName: string; syncState: "loading" | "saving" | "saved" | "error"; onQuick: (kind: Kind) => void; onTask: (kind: Kind, id: string) => void; onPage: (page: Page) => void; onOpportunity: (id: string) => void; onActivity: (item: Activity) => void }) {
-  const getCo = (id: string) => data.companies.find((company) => company.id === id)?.name || "No company";
-  const taskRecord = (task: CrmTask) => {
-    const key = task.recordType === "contact" ? "contacts" : task.recordType === "company" ? "companies" : task.recordType === "job" ? "jobs" : "opportunities";
-    const record = (data[key as keyof CrmData] as any[]).find((item) => item.id === task.recordId);
-    return record ? (record.firstName ? fullName(record) : record.name || record.title) : "No linked record";
-  };
+function Dashboard({ data, metrics, userName, syncState, onQuick, onPage, onActivity }: { data: CrmData; metrics: CrmAnalytics; userName: string; syncState: "loading" | "saving" | "saved" | "error"; onQuick: (kind: Kind) => void; onPage: (page: Page) => void; onActivity: (item: Activity) => void }) {
+  const [meetings, setMeetings] = useState<CalendarMeeting[]>([]);
+  const [meetingLoadError, setMeetingLoadError] = useState("");
+  const [meetingLoading, setMeetingLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const items = await getCalendarMeetings();
+        if (alive) { setMeetings(items); setMeetingLoadError(""); }
+      } catch (error: unknown) {
+        if (alive) setMeetingLoadError(error instanceof Error ? error.message : "Could not load upcoming meetings.");
+      } finally {
+        if (alive) setMeetingLoading(false);
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 60_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
+  const upcomingMeetings = meetings.filter((meeting) => meeting.status === "booked" && Date.parse(meeting.startTime) >= Date.now())
+    .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime)).slice(0, 4);
+  const meetingCount = meetings.filter((meeting) => meeting.status === "booked" && Date.parse(meeting.startTime) >= Date.now()).length;
   const pipeline = metrics.pipeline.filter((item) => !["Won", "Lost"].includes(item.stage));
   const maxCount = Math.max(1, ...pipeline.map((item) => item.count));
   const pipelineValue = metrics.openOpportunityValue;
@@ -631,15 +694,11 @@ function Dashboard({ data, metrics, tasks, userName, syncState, onQuick, onTask,
 
   return <div className="dashboard">
     <div className="dashboard-welcome"><div><span className="welcome-date">{new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date())}</span><h2>Welcome, {userName.split(/\s+/)[0]} <span>✦</span></h2><p>Here’s what’s happening across your workspace today.</p></div><button className="button button-secondary" onClick={() => onPage("Activities")}><Icon name="activity" size={16} />View activity</button></div>
-    <div className="metric-grid">
+    <div className="metric-grid dashboard-priority-metrics">
       <MetricCard label="Total contacts" value={metrics.totalContacts} icon="users" tint="blue" sub="People in your network" />
-      <MetricCard label="Companies" value={metrics.totalCompanies} icon="building" tint="violet" sub="Organizations in your CRM" />
-      <MetricCard label="Active jobs" value={metrics.activeJobs} icon="briefcase" tint="orange" sub="Work underway" />
       <MetricCard label="Open opportunities" value={metrics.openOpportunities} icon="target" tint="teal" sub="Potential engagements" />
       <MetricCard label="Need attention" value={metrics.needsAttention} icon="spark" tint="red" sub="Follow-up due or overdue" />
-      <MetricCard label="Tasks due today" value={metrics.tasksDueToday} icon="check" tint="blue" sub="Your next steps for today" />
-      <MetricCard label="Overdue follow-ups" value={metrics.overdueFollowUps} icon="clock" tint="orange" sub="Contacts & opportunities" />
-      <MetricCard label="Won · last 30 days" value={metrics.wonLast30Days} icon="arrow" tint="green" sub="Opportunities marked Won" />
+      <MetricCard label="Upcoming meetings" value={meetingLoadError ? "—" : meetingCount} icon="calendar" tint="violet" sub={meetingLoadError ? "Could not load bookings" : "Confirmed Cal.com bookings"} />
     </div>
     <div className="dashboard-main-grid">
       <section className="panel pipeline-panel"><div className="section-heading"><div><h3>Opportunity pipeline</h3><p>Open opportunities by stage</p></div><button className="text-button" onClick={() => onPage("Opportunities")}>View pipeline <Icon name="chevron" size={14} /></button></div>
@@ -647,9 +706,9 @@ function Dashboard({ data, metrics, tasks, userName, syncState, onQuick, onTask,
         <div className="pipeline-bars">{pipeline.map(({ stage, count }) => <button className="pipeline-row" key={stage} onClick={() => onPage("Opportunities")}><span className="pipeline-stage-name">{stage}<small>{count} {count === 1 ? "opportunity" : "opportunities"}</small></span><span className="bar-track"><i style={{ width: (count / maxCount * 100) + "%" }} /></span><strong>{count}</strong></button>)}</div>
         <div className="pipeline-footer"><span>Won <strong>{metrics.totalWon}</strong></span><span>Lost <strong>{metrics.totalLost}</strong></span><button onClick={() => onPage("Opportunities")}>See all stages <Icon name="chevron" size={14} /></button></div>
       </section>
-      <section className="panel upcoming-panel"><div className="section-heading"><div><h3>Upcoming tasks</h3><p>Your next important steps</p></div><button className="text-button" onClick={() => onPage("Tasks & Follow-ups")}>View all <Icon name="chevron" size={14} /></button></div>
-        <div className="upcoming-list">{tasks.slice(0, 4).map((task) => <button className="upcoming-item" key={task.id} onClick={() => onTask("task", task.id)}><span className={"task-checkbox " + (task.status === "Completed" ? "checked" : "")}>{task.status === "Completed" ? "✓" : ""}</span><span className="upcoming-copy"><strong>{task.title}</strong><small>{taskRecord(task)}</small></span><span className="upcoming-date">{fmtDate(task.dueDate)}<small>{fmtTime(task.dueDate)}</small></span></button>)}
-        {!tasks.length && <EmptyState title="No upcoming tasks" detail="Add a follow-up to stay on top of next steps." action={<button className="button button-secondary" onClick={() => onQuick("task")}><Icon name="plus" size={15} />Add task</button>} />}</div>
+      <section className="panel upcoming-panel"><div className="section-heading"><div><h3>Upcoming meetings</h3><p>Confirmed bookings from Cal.com</p></div><button className="text-button" onClick={() => onPage("Meetings")}>View all <Icon name="chevron" size={14} /></button></div>
+        <div className="upcoming-list">{upcomingMeetings.map((meeting) => <button className="upcoming-item meeting-upcoming-item" key={meeting.id} onClick={() => onPage("Meetings")}><span className="meeting-date-icon"><Icon name="calendar" size={16} /></span><span className="upcoming-copy"><strong>{meeting.title}</strong><small>{meeting.attendeeName || meeting.attendeeEmail}</small></span><span className="upcoming-date">{fmtDate(meeting.startTime)}<small>{fmtTime(meeting.startTime)}</small></span></button>)}
+        {!upcomingMeetings.length && <EmptyState title={meetingLoading ? "Loading bookings…" : meetingLoadError ? "Could not load bookings" : "No upcoming meetings"} detail={meetingLoadError || "Connect Cal.com to see confirmed bookings here."} action={<button className="button button-secondary" onClick={() => onPage("Meetings")}>{meetingLoadError ? "Retry in Meetings" : "Set up Cal.com"}</button>} />}</div>
       </section>
     </div>
     <div className="dashboard-bottom-grid">
@@ -666,7 +725,7 @@ function Dashboard({ data, metrics, tasks, userName, syncState, onQuick, onTask,
   </div>;
 }
 
-function MetricCard({ label, value, icon, tint, sub }: { label: string; value: number; icon: string; tint: string; sub: string }) {
+function MetricCard({ label, value, icon, tint, sub }: { label: string; value: number | string; icon: string; tint: string; sub: string }) {
   return <div className="metric-card"><div className="metric-top"><span>{label}</span><span className={"metric-icon " + tint}><Icon name={icon} size={17} /></span></div><strong className="metric-value">{value.toLocaleString()}</strong><small>{sub}</small></div>;
 }
 
@@ -774,8 +833,10 @@ function RecordDialog({ kind, record, data, onClose, onSave }: { kind: Kind; rec
   </section></div>;
 }
 
-function DetailPanel({ kind, record, data, notes, activities, getRecordLabel, onClose, onEdit, onArchive, onNote, noteText, setNoteText, onOpen, onStage, onCreateJob, onTaskStatus }: { kind: Kind; record: any; data: CrmData; notes: CrmNote[]; activities: Activity[]; getRecordLabel: (kind: Kind, id: string) => string; onClose: () => void; onEdit: () => void; onArchive: () => void; onNote: () => void; noteText: string; setNoteText: (value: string) => void; onOpen: (kind: Kind, id: string) => void; onStage: (stage: string) => void; onCreateJob: () => void; onTaskStatus: (status: string) => void }) {
+function DetailPanel({ kind, record, data, senderName, notes, activities, getRecordLabel, onClose, onEdit, onArchive, onRestore, onNote, noteText, setNoteText, onOpen, onStage, onCreateJob, onTaskStatus }: { kind: Kind; record: any; data: CrmData; senderName: string; notes: CrmNote[]; activities: Activity[]; getRecordLabel: (kind: Kind, id: string) => string; onClose: () => void; onEdit: () => void; onArchive: () => void; onRestore: () => void; onNote: () => void; noteText: string; setNoteText: (value: string) => void; onOpen: (kind: Kind, id: string) => void; onStage: (stage: string) => void; onCreateJob: () => void; onTaskStatus: (status: string) => void }) {
   const [outreachMessages, setOutreachMessages] = useState<OutreachMessage[]>([]);
+  const [selectedEmail, setSelectedEmail] = useState<OutreachMessage | null>(null);
+  const [showAllConversations, setShowAllConversations] = useState(false);
   useEffect(() => {
     let alive = true;
     if (kind === "contact" || kind === "opportunity") {
@@ -813,7 +874,7 @@ function DetailPanel({ kind, record, data, notes, activities, getRecordLabel, on
   const recordTasks = kind === "task" ? [] : data.tasks.filter((task) => task.recordType === kind && task.recordId === record.id);
   return <div className="detail-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="detail-panel" role="dialog" aria-modal="true"><div className="detail-topbar"><span className="modal-kicker">{kindLabel[kind].toUpperCase()} PROFILE</span><div><button className="icon-button" aria-label="Edit record" onClick={onEdit}><Icon name="note" size={17} /></button><button className="icon-button" aria-label="Close" onClick={onClose}><Icon name="close" size={18} /></button></div></div>
     <div className="detail-hero"><div className={"detail-avatar " + kind}>{kind === "contact" ? initials(title) : <Icon name={kind === "company" ? "building" : kind === "job" ? "briefcase" : kind === "opportunity" ? "target" : "check"} size={21} />}</div><div className="detail-title-wrap"><h2>{title}</h2><p>{subtitle || kindLabel[kind]}</p></div></div>
-    <div className="detail-actions"><button className="button button-primary" onClick={onEdit}><Icon name="note" size={15} />Edit {kindLabel[kind].toLowerCase()}</button>{kind !== "task" && <button className="button button-secondary" onClick={onArchive}>Archive</button>}</div>
+    <div className="detail-actions"><button className="button button-primary" onClick={onEdit}><Icon name="note" size={15} />Edit {kindLabel[kind].toLowerCase()}</button>{kind !== "task" && (record.archived ? <button className="button button-secondary" onClick={onRestore}>Restore from archive</button> : <button className="button button-secondary" onClick={onArchive}>Archive</button>)}</div>
     {kind === "opportunity" && <div className="stage-control"><label>Current stage<select className="form-input" value={record.stage} onChange={(e) => onStage(e.target.value)}>{data.pipelineStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>{record.stage === "Won" && <div className="job-convert"><div><strong>{record.jobId ? "Related job created" : "Ready to start the work?"}</strong><small>{record.jobId ? "This opportunity is linked to a job." : "Create one job with the company, contact, and scope already attached."}</small></div>{record.jobId ? <button className="button button-secondary" onClick={() => onOpen("job", record.jobId)}>Open job</button> : <button className="button button-primary" onClick={onCreateJob}>Create related job</button>}</div>}</div>}
     {kind === "task" && record.status !== "Completed" && record.status !== "Cancelled" && <button className="complete-task-button" onClick={() => onTaskStatus("Completed")}><span>✓</span>Mark task complete</button>}
     <div className="detail-scroll">
@@ -821,11 +882,13 @@ function DetailPanel({ kind, record, data, notes, activities, getRecordLabel, on
       {!!related.length && <section className="detail-section"><div className="detail-section-heading"><h3>Related records</h3><span>{related.length}</span></div><div className="related-list">{related.map((item) => <button key={item.kind + item.id} onClick={() => onOpen(item.kind, item.id)}><span className="relation-icon"><Icon name={item.kind === "company" ? "building" : item.kind === "contact" ? "users" : item.kind === "job" ? "briefcase" : "target"} size={15} /></span><strong>{item.title}</strong><small>{item.meta}</small><Icon name="chevron" size={15} /></button>)}</div></section>}
       {kind === "opportunity" && <section className="detail-section"><h3>Stage history</h3><div className="stage-history">{(record.stageHistory || []).slice().reverse().map((entry: any, index: number) => <div key={entry.stage + entry.date + index} className="history-entry"><span className="history-dot" /><div><strong>{entry.stage}</strong><small>{fmtDate(entry.date)}</small></div></div>)}</div></section>}
       {!!recordTasks.length && <section className="detail-section"><div className="detail-section-heading"><h3>Tasks & follow-ups</h3><span>{recordTasks.length}</span></div><div className="related-list">{recordTasks.map((task) => <button key={task.id} onClick={() => onOpen("task", task.id)}><span className="relation-icon"><Icon name="check" size={15} /></span><strong>{task.title}</strong><small>{fmtDate(task.dueDate)}</small><StatusBadge value={task.status} /></button>)}</div></section>}
-      {(kind === "contact" || kind === "opportunity") && <section className="detail-section"><div className="detail-section-heading"><h3>Outreach emails</h3><span>{recordOutreach.length}</span></div>{recordOutreach.length ? <div className="outreach-history-list">{recordOutreach.slice(0, 8).map((item) => <article key={item.id}><div><strong>{item.subject}</strong><small>{fmtDate(item.sentAt)} · {item.clickCount} link clicks</small></div><span className={"outreach-status " + item.status}>{item.status === "replied" ? "Replied" : item.status === "failed" ? "Failed" : item.status === "sending" ? "Sending" : "Sent"}</span>{item.gmailThreadUrl && <a href={item.gmailThreadUrl} target="_blank" rel="noreferrer">Open in Gmail ↗</a>}</article>)}</div> : <div className="detail-muted">No outreach emails are linked to this record yet.</div>}</section>}
+      {(kind === "contact" || kind === "opportunity") && <section className="detail-section"><div className="detail-section-heading"><h3>Outreach emails</h3><div className="outreach-history-heading-actions"><span>{recordOutreach.length}</span>{recordOutreach.length > 0 && <button className="button button-secondary view-all-conversations" onClick={() => setShowAllConversations(true)}>View all</button>}</div></div>{recordOutreach.length ? <div className="outreach-history-list">{recordOutreach.slice(0, 8).map((item) => <article key={item.id}><div><button className="outreach-subject-button" onClick={() => setSelectedEmail(item)}>{item.subject}</button><small>{fmtDate(item.sentAt)} · {item.clickCount} link clicks</small></div><span className={"outreach-status " + item.status}>{item.status === "replied" ? "Replied" : item.status === "failed" ? "Failed" : item.status === "sending" ? "Sending" : "Sent"}</span>{item.gmailThreadUrl && <a href={item.gmailThreadUrl} target="_blank" rel="noreferrer">Open in Gmail ↗</a>}</article>)}</div> : <div className="detail-muted">No outreach emails are linked to this record yet.</div>}</section>}
       <section className="detail-section"><h3>Notes</h3><div className="add-note-box"><textarea value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Add an internal note..." rows={3} /><button className="button button-primary" disabled={!noteText.trim()} onClick={onNote}>Add note</button></div>{notes.length ? <div className="note-list">{notes.map((note) => <article key={note.id}><p>{note.body}</p><small>{note.author} · {fmtDate(note.createdAt)} at {fmtTime(note.createdAt)}</small></article>)}</div> : <div className="detail-muted">No notes added yet.</div>}</section>
       <section className="detail-section"><h3>Activity</h3><ActivityList items={activities.slice(0, 8)} onClick={() => {}} getRecordLabel={getRecordLabel} interactive={false} /></section>
       <div className="record-meta">Created {fmtDate(record.createdAt)} · Updated {fmtDate(record.updatedAt)}</div>
     </div>
+    {showAllConversations && <OutreachConversationsDialog title={title} messages={recordOutreach} senderName={senderName} onClose={() => setShowAllConversations(false)} />}
+    {selectedEmail && <OutreachThreadDialog message={selectedEmail} senderName={senderName} onReplySent={(sentReply) => setOutreachMessages((current) => [sentReply, ...current.filter((item) => item.id !== sentReply.id)])} onClose={() => setSelectedEmail(null)} />}
     </aside></div>;
 }
 

@@ -13,7 +13,9 @@ The NestJS API is in the sibling project `../otax-internal-server`. Start it wit
 
 For Supabase authentication, copy `.env.example` to `.env.local` and set `VITE_AUTH_MODE`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL`. Never put the Supabase service role key or Google OAuth client secret in this folder.
 
-Gmail sending and reply checks are configured on the API. See the API README for the Google OAuth setup and required database migration. Click tracking requires the API to be reachable from email recipients through `PUBLIC_API_URL`.
+Gmail sending, reply sync, and on-demand thread viewing are configured on the API. The Outreach page shows recent messages; choose **View all outreach** to browse and search the complete message history returned by the API. Open any message to read the sent and received messages in a chat-style view and reply from the bottom of the conversation. Gmail replies are sent into the existing Gmail thread; other providers keep sent replies grouped in CRM conversation history. Full Gmail conversation viewing requires approving the Gmail read-only scope and reconnecting the mailbox. See the API README for Google OAuth setup, database migrations, and the Cal.com webhook setup used to record booked, cancelled, and rescheduled meetings. Click tracking and Cal.com webhooks require the API to be reachable over HTTPS through `PUBLIC_API_URL`.
+
+AI email drafts use Groq. Apply API migration `006_groq_drafting.sql`, then set `GROQ_API_KEY` on the API or add a workspace key under Settings → AI email drafting and test it. The signed-in display name is editable under Settings → Your profile and is also used as the default email signature.
 
 ## Render preview deployment
 

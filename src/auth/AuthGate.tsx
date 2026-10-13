@@ -5,9 +5,12 @@ import App from "../App";
 import { isMockAuthEnabled, isSupabaseConfigured, mockSessionStorageKey, supabase } from "../data/api";
 import "../styles.css";
 
+const demoDisplayNameKey = "northstar-crm-demo-display-name";
+
 export default function AuthGate() {
   const [session, setSession] = useState<Session | null>(null);
   const [demoSession, setDemoSession] = useState(false);
+  const [demoName, setDemoName] = useState(() => window.localStorage.getItem(demoDisplayNameKey)?.trim() || "Demo User");
   const [checkingSession, setCheckingSession] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [email, setEmail] = useState("");
@@ -80,6 +83,23 @@ export default function AuthGate() {
     }
   };
 
+  const updateDisplayName = async (name: string) => {
+    const cleanName = name.trim();
+    if (!cleanName) throw new Error("Enter a name before saving.");
+    if (isMockAuthEnabled) {
+      window.localStorage.setItem(demoDisplayNameKey, cleanName);
+      setDemoName(cleanName);
+      return;
+    }
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const metadata = session?.user.user_metadata || {};
+    const { error: updateError } = await supabase.auth.updateUser({ data: { ...metadata, full_name: cleanName } });
+    if (updateError) throw updateError;
+    const { data, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError) throw sessionError;
+    setSession(data.session);
+  };
+
   const enterDemo = () => {
     window.sessionStorage.setItem(mockSessionStorageKey, "active");
     setDemoSession(true);
@@ -92,7 +112,7 @@ export default function AuthGate() {
   }
 
   if (demoSession) {
-    return <App userName="Demo User" userEmail="demo@northstar.local" onSignOut={signOut} />;
+    return <App userName={demoName} userEmail="demo@northstar.local" onSignOut={signOut} onUpdateUserName={updateDisplayName} />;
   }
 
   if (session?.user) {
@@ -100,7 +120,7 @@ export default function AuthGate() {
     const name = typeof metadataName === "string" && metadataName.trim()
       ? metadataName.trim()
       : session.user.email?.split("@")[0] || "Workspace member";
-    return <App userName={name} userEmail={session.user.email || ""} onSignOut={signOut} />;
+    return <App userName={name} userEmail={session.user.email || ""} onSignOut={signOut} onUpdateUserName={updateDisplayName} />;
   }
 
   return <main className="auth-shell">

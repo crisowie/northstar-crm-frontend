@@ -1,5 +1,5 @@
 import { apiRequest } from "./api";
-import type { AiEmailDraft, EmailProviderId, EmailProviderSettings, EmailSuppression, GmailConnection, GroqDraftSettings, OutreachMessage, OutreachStats } from "../types/outreach";
+import type { AiEmailDraft, CalendarIntegrationSettings, CalendarMeeting, EmailProviderId, EmailProviderSettings, EmailSuppression, GmailConnection, GroqDraftSettings, OutreachMessage, OutreachStats, OutreachThread } from "../types/outreach";
 
 export function getGmailConnection() {
   return apiRequest<GmailConnection>("/outreach/gmail/status");
@@ -19,6 +19,25 @@ export function getOutreachMessages() {
 
 export function getOutreachStats() {
   return apiRequest<OutreachStats>("/outreach/stats");
+}
+
+export function getOutreachThread(messageId: string) {
+  return apiRequest<OutreachThread>(`/outreach/messages/${encodeURIComponent(messageId)}/thread`);
+}
+
+export function getCalendarMeetings() {
+  return apiRequest<CalendarMeeting[]>("/outreach/calendar/bookings");
+}
+
+export function getCalendarIntegrationSettings() {
+  return apiRequest<CalendarIntegrationSettings>("/outreach/calendar/settings");
+}
+
+export function saveCalendarWebhookSecret(secret: string) {
+  return apiRequest<{ configured: boolean }>("/outreach/calendar/settings", {
+    method: "PATCH",
+    body: JSON.stringify({ secret }),
+  });
 }
 
 export function syncOutreachReplies() {
@@ -73,6 +92,13 @@ export function sendOutreachEmail(input: {
   recipientOptedIn?: boolean;
 }) {
   return apiRequest<OutreachMessage>("/outreach/messages", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function sendOutreachReply(messageId: string, input: { body: string; senderName: string; idempotencyKey: string }) {
+  return apiRequest<OutreachMessage>(`/outreach/messages/${encodeURIComponent(messageId)}/reply`, {
     method: "POST",
     body: JSON.stringify(input),
   });

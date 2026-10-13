@@ -1,0 +1,291 @@
+Northstar Outreach Analytics Review
+Reviewed: 12 October 2026
+Scope: frontend workspace (otax-internal-tool) and sibling API workspace
+(otax-internal-server). This is a source-code review; no .env files were read,
+and live provider accounts, deployed webhook configuration, and production
+database state were not inspected.
+
+Executive summary
+-----------------
+The system already has the foundations for useful email analytics: a message
+record per send, a normalized provider-event table, provider webhooks for
+Resend and Amazon SES, Gmail metadata-based reply matching, tracked-link
+redirects, and bounce/complaint suppression. The Outreach page displays
+sent, delivered, replies, reply rate, clicks, opens, and bounces.
+
+It does not yet provide a complete or consistently reliable analytics view.
+Gmail does not produce delivery, bounce, or open events in this integration.
+SES and Resend need correctly configured event destinations/webhooks for
+delivery and bounce metrics. The API's statistics endpoint has no date or
+campaign filters and calculates most metrics from only the latest 1,000
+messages. The UI does not provide a per-message event timeline, failed-send
+count, complaints, unsubscribe count, or clear coverage indicators. The
+current event store is substantially more detailed than what the user can
+currently inspect.
+
+The main CRM dashboard's /crm/analytics data is a separate set of sales and
+pipeline measures (contacts, opportunities, jobs, and tasks); email outreach
+figures are currently confined to the Outreach page.
+
+What is implemented today
+-------------------------
+
+Frontend (src/outreach/OutreachPage.tsx, src/data/outreach.ts,
+src/types/outreach.ts):
+
+- Loads the message list and aggregate statistics from /outreach/messages and
+  /outreach/stats.
+- Displays seven aggregate figures: Emails sent, Delivery confirmations,
+  Replies, Reply rate, Link clicks, Open estimates, and Bounces.
+- Displays up to the API's returned recent-message list with recipient,
+  subject, provider, current status, sent time, click count, and a Gmail
+  thread link when available.
+- Polls for data every 60 seconds while the page is visible. If Gmail is
+  connected, it also syncs replies on page load and during polling.
+- Offers a manual Gmail reply sync action.
+- Describes opens as image-load estimates and CRM click tracking as tracked
+  link activity, both of which should remain caveated in reporting.
+
+Backend (otax-internal-server/src/outreach/outreach.service.ts and
+outreach.controller.ts):
+
+- Creates a message record before attempting to send. Successful Gmail sends
+  are recorded as "sent"; successful SES/Resend API requests start as
+  "accepted". These outcomes mean the provider accepted the API request, not
+  that a recipient's mailbox received the message.
+- Persists normalized events in crm_email_events (migration
+  supabase/migrations/004_email_providers.sql). Supported types include
+  sent/provider_accepted, delivered, bounced, complaint, failed, opened,
+  clicked, reply_received, and unsubscribed. Provider event IDs are used for
+  deduplication.
+- Verifies Resend webhook signatures and Amazon SNS notification signatures.
+  SES notifications are also checked against the configured SNS topic.
+- Maps SES and Resend provider event names to the normalized event types.
+- Rewrites email links through the CRM redirect. Click requests increment
+  per-link and per-message counters and create clicked events.
+- Syncs Gmail threads using metadata rather than downloading message bodies.
+  It detects replies from the original recipient after the send. When Gmail
+  is connected, it also makes a best-effort match for SES/Resend messages
+  using From, To, normalized Subject, and time headers. That match can be
+  ambiguous.
+- Adds a suppression for complaints, unsubscribes, and permanent/hard bounces.
+  Subsequent sends to suppressed addresses are blocked. Soft/transient bounces
+  are recorded but are not treated as permanent suppressions.
+
+Provider coverage and limitations
+---------------------------------
+
+Gmail / Google Workspace:
+- Send acceptance, provider IDs, CRM tracked-link clicks, and Gmail reply
+  synchronization are supported.
+- Reliable delivery, bounce, and open events are not provided by the current
+  Gmail integration. Those figures cannot be made complete for Gmail merely
+  by improving the dashboard.
+- Replies require an active connected mailbox and a successful sync. API
+  messages sent by SES/Resend need Gmail connected to get the best-effort
+  cross-provider reply correlation.
+
+Amazon SES:
+- Delivery, bounce, complaint, reject/failure, open, and click events can be
+  obtained only when an SES configuration set and SNS event destination are
+  set up with the required event types and the SNS subscription is confirmed.
+- The webhook must be publicly reachable and the provider's capability check
+  must confirm the configuration. Source files alone cannot prove the
+  production service is currently configured this way.
+
+Resend:
+- The API supports delivery, bounce, complaint, failure, open, and provider
+  click webhook events. The Resend webhook must be created with the relevant
+  event subscriptions and its signing secret configured.
+- The current API guard requires explicit opt-in before sending via Resend.
+  Do not use Resend for unsolicited prospecting.
+
+Metric accuracy and current gaps
+-------------------------------
+
+1. "Emails sent" is a message count, not a count of recipient mailbox
+   deliveries. It includes current statuses sent, accepted, delivered,
+   replied, bounced, and complained. Failed and unresolved sending attempts
+   are excluded. The UI wording "Accepted by a selected provider" is closer
+   to the actual meaning; use "Provider accepted" or define a delivered/
+   accepted funnel instead of calling the figure simply "sent".
+
+2. Replies are counted from messages with replied_at. Gmail detection depends
+   on syncing; external-provider matches are best effort. The UI says
+   "Gmail mailbox replies", which understates that SES/Resend sends can also
+   be matched through Gmail. Reply rate is calculated as replies divided by
+   the included "sent" count, with no selected time period or cohort.
+
+3. Delivery and bounce totals count each message's current status, rather
+   than aggregating all corresponding events. They are therefore not event
+   totals, and cannot show repeated/recipient-level outcomes or changes over
+   time. A delivered event changes accepted to delivered; bounce and complaint
+   events can replace the message's current status. The event table retains
+   event history but the UI does not expose it.
+
+4. Most totals (sent, replies, deliveries, bounces, and clicks) are derived
+   from getRows(), which selects at most 1,000 messages. They can silently
+   undercount workspaces with more than 1,000 sends. The open count is queried
+   separately from the event table and does not have the same message cap.
+
+5. Statistics are lifetime totals only: /outreach/stats accepts no time
+   range, and the interface has no date picker, campaign filter, or
+   comparison period. Open, delivery, bounce, and click figures also depend
+   on provider-specific capability/configuration.
+
+6. Open events are not proof a human read a message. Mail privacy proxies,
+   image blocking, caching, and security scanners can suppress or inflate
+   image-load events. Present opens as approximate and optionally allow
+   disabling them.
+
+7. Click counts count redirect requests, not unique human clicks. Mail
+   security scanners and link-preview services can click links automatically;
+   the current tracker has no unique-visitor or bot classification. Provider
+   click webhooks may also be stored alongside CRM redirect click events, so
+   event counts should be deduplicated/defined before adding them together.
+
+8. The current metrics omit failed sends, unresolved sends, complaints,
+   unsubscribes, soft vs hard bounce breakdown, time-to-reply, delivery rate,
+   unique clickers, and event processing/coverage health. There is no visible
+   last webhook received/last successful reply-sync status in Outreach.
+
+9. Although webhook/provider event persistence reports storage errors, the
+   statistics endpoint does not expose event-processing failures to the user.
+   A missing metric can mean "zero", "unsupported by this provider", "webhook
+   not configured", "not yet synchronized", or "event not correlated"; the
+   current UI does not distinguish these cases.
+
+Recommended implementation
+---------------------------
+
+Phase 1 - Correct definitions and coverage (small, high value):
+- Rename "Emails sent" to "Provider accepted" (or split it into accepted,
+  delivered, and failed) and state exactly what counts in each metric.
+- Clarify that reply counts include Gmail replies and best-effort
+  cross-provider matches, and show when Gmail was last synchronized.
+- Show per-provider capability/coverage beside metrics. For unsupported or
+  unconfigured delivery/open/bounce events, show "Not available" rather than
+  a misleading zero.
+- Add explicit failed and unresolved/sending totals; expose complaints and
+  unsubscribes. Continue differentiating hard and transient bounces.
+- Show the selected period and metric denominators wherever a rate is shown.
+
+Phase 2 - Add dependable analytics APIs:
+- Add a date range (with a documented timezone and inclusive/exclusive
+  boundaries) and optional provider/contact/campaign filters to an analytics
+  endpoint.
+- Aggregate in Postgres over crm_outreach_messages and crm_email_events,
+  rather than deriving lifetime totals from a 1,000-row application fetch.
+  Include tenant/user filters in every query and add indexes suited to
+  user_id + event_timestamp and user_id + provider/status + sent_at.
+- Define counts against a stable send cohort. For example: accepted messages
+  sent during the selected range; delivery, bounce, reply, and click
+  outcomes attributed back to those messages. Define whether a rate uses
+  accepted or delivered as its denominator, and disclose provider coverage.
+- Decide whether the analytics API should report unique messages, events,
+  recipients, or unique recipients for each measure; don't mix these units.
+- Add tests for boundaries, duplicate webhooks, events arriving out of order,
+  large histories (>1,000 messages), and provider-specific missing events.
+
+Phase 3 - Make message-level activity explorable:
+- Add an authenticated, paginated events endpoint filtered by message ID and
+  time. Return normalized event type/time/source, safe and minimal details,
+  and processing/correlation state.
+- Add a message detail/timeline in the UI: created, provider accepted,
+  delivered, bounced/failed, opened (estimated), clicked, reply, complaint,
+  unsubscribe. Show recipient/provider IDs only where appropriate; never
+  expose provider secrets or raw webhook payloads.
+- Display bounce reason/type and event source, while redacting unnecessary
+  personal data. Provide search/filter/export with access control and
+  retention limits.
+
+Phase 4 - Improve ingestion and operational reliability:
+- Persist webhook receipt/processing status and safely retry transient
+  processing failures. Make webhook processing idempotent before applying
+  status changes or suppressions, and test late/out-of-order events so an old
+  event cannot incorrectly overwrite a newer current status.
+- Monitor webhook delivery, signature failures, event correlation rate,
+  provider sync errors, and last successful Gmail sync. Alert on sustained
+  ingestion failures rather than presenting missing events as zero.
+- Add robust provider event correlation, including SES message tags and
+  provider message IDs. Preserve unmatched events and expose them for
+  diagnosis instead of losing their useful evidence.
+- For broader Gmail delivery/bounce analytics, investigate a proper
+  bounce/DSN mailbox workflow or use an email delivery provider that offers
+  verified delivery events. Gmail API acceptance alone cannot establish
+  recipient delivery.
+- Treat privacy and compliance as product requirements: document tracking,
+  respect consent and unsubscribe/suppression state, minimize stored event
+  details, set retention/deletion policies, and avoid claiming opens prove
+  reading.
+
+Suggested definitions
+---------------------
+- Attempted: a send attempt persisted, including unresolved attempts.
+- Provider accepted: provider accepted the send API request; not equivalent
+  to inbox delivery.
+- Delivered: provider emitted a positive delivery event. This is available
+  only for configured event-capable providers.
+- Hard bounce: permanent non-delivery; suppress the address.
+- Soft bounce: temporary/non-permanent non-delivery; report separately and
+  apply a documented retry policy, if any.
+- Complaint: recipient/provider abuse complaint; suppress promptly.
+- Reply: a matched inbound response after the send; identify the matching
+  method and acknowledge best-effort correlation.
+- Open estimate: provider-reported image-load event; not proof of reading.
+- Click: tracked redirect request; report total and unique-recipient counts
+  separately once uniqueness and bot filtering are implemented.
+
+Conclusion
+----------
+The two workspaces are already instrumented beyond basic send logging, but
+they do not yet track or present "everything" reliably across all providers.
+The event schema and webhooks make a fuller system feasible. The highest
+priority is to make existing figures truthful and complete for large
+workspaces, expose provider coverage and failures, and provide date-filtered
+database aggregates. A per-message event timeline and stronger webhook/sync
+observability are the next steps. Actual production completeness must be
+verified against live provider settings, webhook subscriptions, SNS
+confirmation, Gmail connection/sync health, and the applied Supabase
+migrations; those cannot be established by this source-only review.
+
+Implementation follow-up: meetings and email threads
+----------------------------------------------------
+Reviewed and implemented: 13 October 2026.
+
+The workspaces now include:
+- An in-app email conversation view. Clicking a message subject opens the
+  CRM-stored sent body; with Gmail connected and read-only authorization, it
+  loads the Gmail thread contents on demand. Thread bodies are not copied to
+  the CRM database. Existing Gmail connections need to be disconnected and
+  re-authorized to grant the new gmail.readonly scope. This is a restricted,
+  broader mailbox permission, so grant it only for mailboxes whose owners
+  approve the access.
+- A Cal.com Meetings page, dashboard upcoming-meeting count/list, and
+  authenticated settings for the webhook URL and shared signing secret.
+- Signed Cal.com webhook processing for booking created, cancelled,
+  rescheduled, and rejected events. Booking records are stored in the new
+  crm_calendar_bookings table, linked to a CRM contact by attendee email when
+  there is an exact match. Cal.com can reach the public API over HTTPS; the
+  API verifies the X-Cal-Signature-256 HMAC and stores the shared secret
+  encrypted.
+- A less crowded dashboard with four priority metrics, including upcoming
+  booked meetings, instead of the previous eight summary cards.
+
+Before using the booking integration in production, apply
+otax-internal-server/supabase/migrations/005_cal_bookings.sql through the
+Supabase migration process. In the Meetings page, copy the per-workspace
+webhook URL, create a Cal.com webhook with BOOKING_CREATED,
+BOOKING_CANCELLED, and BOOKING_RESCHEDULED selected, set a unique signing
+secret of at least 32 characters in both Cal.com and the CRM, and confirm the
+API is publicly reachable over HTTPS. Then create a test booking, cancel or
+reschedule it, and verify the dashboard and Meetings page reflect each
+change.
+
+To read full Gmail conversations, disconnect and reconnect the mailbox after
+deploying the API with the new scope. Google classifies gmail.readonly as a
+restricted scope; OAuth consent-screen verification may be required for the
+deployment. Verify a sent message and a reply appear in the in-app thread
+view. Build and API regression tests passed after these code changes; live
+provider authorization, production webhook delivery, and migration execution
+still require deployment-side verification.
