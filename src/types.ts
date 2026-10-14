@@ -24,6 +24,7 @@ export interface Contact {
   createdAt: string;
   updatedAt: string;
   archived?: boolean;
+  customFields?: Record<string, string>;
 }
 export interface Company {
   id: string;
@@ -39,6 +40,7 @@ export interface Company {
   createdAt: string;
   updatedAt: string;
   archived?: boolean;
+  customFields?: Record<string, string>;
 }
 export interface Job {
   id: string;

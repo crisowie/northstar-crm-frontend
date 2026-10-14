@@ -31,6 +31,46 @@ const today = () => {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, "0"), String(date.getDate()).padStart(2, "0")].join("-");
 };
 const newId = (prefix: string) => prefix + "-" + Math.random().toString(36).slice(2, 9);
+const normalizeCsvHeader = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+const parseCsv = (text: string) => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (character === '"') {
+      if (quoted && text[index + 1] === '"') {
+        field += '"';
+        index += 1;
+      } else if (quoted) {
+        quoted = false;
+      } else if (!field.trim()) {
+        field = "";
+        quoted = true;
+      } else {
+        field += character;
+      }
+    } else if (character === "," && !quoted) {
+      row.push(field.trim());
+      field = "";
+    } else if ((character === "\n" || character === "\r") && !quoted) {
+      row.push(field.trim());
+      if (row.some((value) => value !== "")) rows.push(row);
+      row = [];
+      field = "";
+      if (character === "\r" && text[index + 1] === "\n") index += 1;
+    } else {
+      field += character;
+    }
+  }
+
+  row.push(field.trim());
+  if (row.some((value) => value !== "")) rows.push(row);
+  return rows;
+};
+const normalizeCompanyName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 const fmtDate = (date?: string) => {
   if (!date) return "—";
   const parsed = new Date(date.length === 10 ? date + "T12:00:00" : date);
@@ -498,35 +538,111 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
   const importCsv = async (file?: File) => {
     if (!file) return;
     const text = await file.text();
-    const lines = text.split(/\r?\n/).filter((line) => line.trim());
-    if (lines.length < 2) { notify("CSV needs a header row and at least one contact."); return; }
-    const parseLine = (line: string) => line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((part) => part.trim().replace(/^"|"$/g, "").replace(/""/g, '"'));
-    const headers = parseLine(lines[0]).map((part) => part.toLowerCase().replace(/[\s_-]/g, ""));
-    const rows = lines.slice(1).map(parseLine);
-    let imported = 0, duplicates = 0;
+    const parsedRows = parseCsv(text.replace(/^\uFEFF/, ""));
+    if (parsedRows.length < 2) { notify("CSV needs a header row and at least one contact."); return; }
+    const headers = parsedRows[0].map(normalizeCsvHeader);
+    const rows = parsedRows.slice(1);
+    const companyHeaders = new Set([
+      "company", "companyname", "companynameforemails", "website", "companywebsite", "industry", "employees",
+      "companysize", "companyaddress", "companycity", "companystate", "companycountry", "companyphone",
+      "companylinkedinurl", "keywords", "technologies", "annualrevenue", "totalfunding", "latestfunding",
+      "latestfundingamount", "lastraisedat", "parentcompany", "parentcompanyapollo",
+      "parentcompanyapollodata", "parentcompanyapolladataorganizationid", "apolloaccountid", "sic", "siccodes",
+      "naics", "naicscodes", "accountowner", "numberofretaillocations",
+    ]);
+    const contactStandardHeaders = new Set([
+      "firstname", "first", "lastname", "last", "email", "emailaddress", "phone", "phonenumber", "jobtitle",
+      "title", "country", "countryregion", "region", "preferredlanguage", "language", "contactlanguage", "source", "tags",
+    ]);
+    let imported = 0, duplicates = 0, companiesCreated = 0;
     mutate((copy) => {
       rows.forEach((row) => {
-        const value = (keys: string[]) => { const index = headers.findIndex((header) => keys.includes(header)); return index >= 0 ? row[index] || "" : ""; };
-        const email = value(["email", "emailaddress"]).trim();
-        if (email && copy.contacts.some((contact) => contact.email.toLowerCase() === email.toLowerCase())) { duplicates += 1; return; }
+        const value = (keys: string[]) => {
+          const index = headers.findIndex((header) => keys.includes(header));
+          return index >= 0 ? (row[index] || "").trim() : "";
+        };
+        const companyNameCsv = value(["companyname", "company", "companynameforemails"]);
+        const importedCompanyFields: Record<string, string> = {};
+        headers.forEach((header, index) => {
+          const fieldValue = (row[index] || "").trim();
+          if (fieldValue && companyHeaders.has(header) && !["company", "companyname"].includes(header)) {
+            importedCompanyFields[parsedRows[0][index].trim()] = fieldValue;
+          }
+        });
+        const website = value(["website", "companywebsite"]);
+        const industry = value(["industry"]);
+        const size = value(["employees", "companysize"]);
+        const companyLocation = [
+          value(["companyaddress"]),
+          value(["companycity"]),
+          value(["companystate"]),
+          value(["companycountry"]),
+        ].filter(Boolean).join(", ");
+        let company: Company | undefined;
+        if (companyNameCsv) {
+          const normalizedName = normalizeCompanyName(companyNameCsv);
+          company = copy.companies.find((item) => normalizeCompanyName(item.name) === normalizedName);
+          if (company) {
+            company.website = website || company.website;
+            company.industry = industry || company.industry;
+            company.size = size || company.size;
+            company.location = companyLocation || company.location;
+            company.customFields = { ...company.customFields, ...importedCompanyFields };
+            company.updatedAt = today();
+          } else {
+            company = {
+              id: newId("co"), name: companyNameCsv, website, industry, size, location: companyLocation,
+              description: "", status: "Prospect", tags: "", notes: "", createdAt: today(), updatedAt: today(),
+              customFields: importedCompanyFields,
+            };
+            copy.companies.unshift(company);
+            companiesCreated += 1;
+          }
+        }
+
+        const email = value(["email", "emailaddress"]);
         const firstName = value(["firstname", "first"]);
         const lastName = value(["lastname", "last"]);
+        const customFields: Record<string, string> = {};
+        headers.forEach((header, index) => {
+          const fieldValue = (row[index] || "").trim();
+          if (fieldValue && !companyHeaders.has(header) && !contactStandardHeaders.has(header)) {
+            customFields[parsedRows[0][index].trim()] = fieldValue;
+          }
+        });
+        const existingContact = email
+          ? copy.contacts.find((contact) => contact.email.toLowerCase() === email.toLowerCase())
+          : undefined;
+        if (existingContact) {
+          existingContact.firstName = existingContact.firstName || firstName;
+          existingContact.lastName = existingContact.lastName || lastName;
+          existingContact.phone = existingContact.phone || value(["workdirectphone", "mobilephone", "corporatephone", "phone", "phonenumber", "homephone", "otherphone"]);
+          existingContact.country = existingContact.country || value(["country", "countryregion", "region"]);
+          existingContact.preferredLanguage = existingContact.preferredLanguage || value(["preferredlanguage", "language", "contactlanguage"]);
+          existingContact.jobTitle = existingContact.jobTitle || value(["jobtitle", "title"]);
+          existingContact.companyId = existingContact.companyId || company?.id || "";
+          existingContact.customFields = { ...existingContact.customFields, ...customFields };
+          existingContact.updatedAt = today();
+          duplicates += 1;
+          return;
+        }
         if (!firstName && !lastName) return;
-        const companyNameCsv = value(["company", "companyname"]);
-        const company = copy.companies.find((item) => item.name.toLowerCase() === companyNameCsv.toLowerCase());
         const contact: Contact = {
-          id: newId("ct"), firstName, lastName, email, phone: value(["phone", "phonenumber"]),
+          id: newId("ct"), firstName, lastName, email,
+          phone: value(["workdirectphone", "mobilephone", "corporatephone", "phone", "phonenumber", "homephone", "otherphone"]),
           country: value(["country", "countryregion", "region"]),
           preferredLanguage: value(["preferredlanguage", "language", "contactlanguage"]),
           jobTitle: value(["jobtitle", "title"]), companyId: company?.id || "",
-          source: value(["source"]) || "CSV import", tags: value(["tags"]), status: "Lead",
+          source: value(["source"]) || "Apollo CSV import",
+          tags: value(["tags", "lists"]), status: "Lead",
           notes: "", lastContacted: "", nextFollowUp: "", createdAt: today(), updatedAt: today(),
+          customFields,
         };
         copy.contacts.unshift(contact); imported += 1;
         addActivity(copy, "contact", "Contact imported", fullName(contact), "contact", contact.id);
       });
     });
-    notify("Imported " + imported + " contact" + (imported === 1 ? "" : "s") + (duplicates ? " · skipped " + duplicates + " duplicate" + (duplicates === 1 ? "" : "s") : ""));
+    notify("Imported " + imported + " contact" + (imported === 1 ? "" : "s") + " and " + companiesCreated + " compan" + (companiesCreated === 1 ? "y" : "ies") + (duplicates ? " · skipped " + duplicates + " duplicate" + (duplicates === 1 ? "" : "s") : ""));
     if (importRef.current) importRef.current.value = "";
   };
 
@@ -896,6 +1012,9 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
       : kind === "job" ? [["Status", record.status], ["Priority", record.priority], ["Owner", record.owner], ["Start date", fmtDate(record.startDate)], ["Due date", fmtDate(record.dueDate)], ["Completion date", fmtDate(record.completionDate)], ["Category", record.category], ["Next action", record.nextAction]]
         : kind === "opportunity" ? [["Stage", record.stage], ["Priority", record.priority], ["Owner", record.owner], ["Estimated value", record.estimatedValue ? new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 0 }).format(Number(record.estimatedValue)) + " · estimate" : "Not set"], ["Confidence", record.confidence ? record.confidence + "%" : "Not set"], ["Expected decision", fmtDate(record.expectedDecisionDate)], ["Next follow-up", fmtDate(record.nextFollowUp)], ["Next action", record.nextAction], ["Loss reason", record.lossReason]]
           : [["Type", record.type], ["Status", record.status], ["Priority", record.priority], ["Owner", record.owner], ["Due", fmtDate(record.dueDate) + (fmtTime(record.dueDate) ? " · " + fmtTime(record.dueDate) : "")], ["Completed", fmtDate(record.completedAt)]];
+  const importedFields: [string, string][] = ["contact", "company"].includes(kind)
+    ? Object.entries(record.customFields || {}).filter((entry): entry is [string, string] => typeof entry[1] === "string").sort(([left], [right]) => left.localeCompare(right))
+    : [];
   const internalNotes = record.notes || record.description || "";
   const recordTasks = kind === "task" ? [] : data.tasks.filter((task) => task.recordType === kind && task.recordId === record.id);
   return <div className="detail-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="detail-panel" role="dialog" aria-modal="true"><div className="detail-topbar"><span className="modal-kicker">{kindLabel[kind].toUpperCase()} PROFILE</span><div><button className="icon-button" aria-label="Edit record" onClick={onEdit}><Icon name="note" size={17} /></button><button className="icon-button" aria-label="Close" onClick={onClose}><Icon name="close" size={18} /></button></div></div>
@@ -904,7 +1023,7 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
     {kind === "opportunity" && <div className="stage-control"><label>Current stage<select className="form-input" value={record.stage} onChange={(e) => onStage(e.target.value)}>{data.pipelineStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>{record.stage === "Won" && <div className="job-convert"><div><strong>{record.jobId ? "Related job created" : "Ready to start the work?"}</strong><small>{record.jobId ? "This opportunity is linked to a job." : "Create one job with the company, contact, and scope already attached."}</small></div>{record.jobId ? <button className="button button-secondary" onClick={() => onOpen("job", record.jobId)}>Open job</button> : <button className="button button-primary" onClick={onCreateJob}>Create related job</button>}</div>}</div>}
     {kind === "task" && record.status !== "Completed" && record.status !== "Cancelled" && <button className="complete-task-button" onClick={() => onTaskStatus("Completed")}><span>✓</span>Mark task complete</button>}
     <div className="detail-scroll">
-      <section className="detail-section"><h3>Details</h3><div className="detail-fields">{displayFields.filter(([, value]) => value && value !== "—").map(([label, value]) => <div className="detail-field" key={label}><small>{label}</small><span>{label === "Status" || label === "Stage" ? <StatusBadge value={String(value)} /> : label === "Priority" ? <PriorityBadge value={String(value)} /> : String(value)}</span></div>)}</div>{internalNotes && <div className="detail-description"><small>{kind === "contact" || kind === "company" ? "Notes" : "Description / notes"}</small><p>{internalNotes}</p></div>}</section>
+      <section className="detail-section"><h3>Details</h3><div className="detail-fields">{[...displayFields, ...importedFields].filter(([, value]) => value && value !== "—").map(([label, value]) => <div className="detail-field" key={label}><small>{label}</small><span>{label === "Status" || label === "Stage" ? <StatusBadge value={String(value)} /> : label === "Priority" ? <PriorityBadge value={String(value)} /> : String(value)}</span></div>)}</div>{internalNotes && <div className="detail-description"><small>{kind === "contact" || kind === "company" ? "Notes" : "Description / notes"}</small><p>{internalNotes}</p></div>}</section>
       {!!related.length && <section className="detail-section"><div className="detail-section-heading"><h3>Related records</h3><span>{related.length}</span></div><div className="related-list">{related.map((item) => <button key={item.kind + item.id} onClick={() => onOpen(item.kind, item.id)}><span className="relation-icon"><Icon name={item.kind === "company" ? "building" : item.kind === "contact" ? "users" : item.kind === "job" ? "briefcase" : "target"} size={15} /></span><strong>{item.title}</strong><small>{item.meta}</small><Icon name="chevron" size={15} /></button>)}</div></section>}
       {kind === "opportunity" && <section className="detail-section"><h3>Stage history</h3><div className="stage-history">{(record.stageHistory || []).slice().reverse().map((entry: any, index: number) => <div key={entry.stage + entry.date + index} className="history-entry"><span className="history-dot" /><div><strong>{entry.stage}</strong><small>{fmtDate(entry.date)}</small></div></div>)}</div></section>}
       {!!recordTasks.length && <section className="detail-section"><div className="detail-section-heading"><h3>Tasks & follow-ups</h3><span>{recordTasks.length}</span></div><div className="related-list">{recordTasks.map((task) => <button key={task.id} onClick={() => onOpen("task", task.id)}><span className="relation-icon"><Icon name="check" size={15} /></span><strong>{task.title}</strong><small>{fmtDate(task.dueDate)}</small><StatusBadge value={task.status} /></button>)}</div></section>}
