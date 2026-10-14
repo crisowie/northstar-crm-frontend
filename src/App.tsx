@@ -240,7 +240,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
 
     mutate((copy) => {
       const recordForm = { ...form };
-      if (kind === "contact" && !existing) {
+      if (kind === "contact") {
         const companyNameInput = (recordForm.companyName || "").trim();
         delete recordForm.companyName;
         if (companyNameInput) {
@@ -830,11 +830,11 @@ function RecordDialog({ kind, record, data, onClose, onSave }: { kind: Kind; rec
   const [form, setForm] = useState<Record<string, string>>(() => ({
     owner: "You", status: kind === "task" ? "To Do" : kind === "job" ? "New" : kind === "opportunity" ? data.pipelineStages[0] : kind === "company" ? "Active" : "Lead",
     priority: "Medium", source: "Referral", type: "Follow-up", recordType: "opportunity",
-    ...(kind === "contact" && !record ? { companyName: "" } : {}),
+    ...(kind === "contact" ? { companyName: data.companies.find((company) => company.id === record?.companyId)?.name || "" } : {}),
     ...record,
   }));
   const fields = fieldsFor(kind, data, form.recordType).map((field) =>
-    kind === "contact" && !record && field.key === "companyId"
+    kind === "contact" && field.key === "companyId"
       ? { ...field, key: "companyName", type: "text", options: undefined, placeholder: "Enter company name" }
       : field);
   const setValue = (key: string, value: string) => setForm((old) => key === "recordType" ? { ...old, recordType: value, recordId: "" } : { ...old, [key]: value });
