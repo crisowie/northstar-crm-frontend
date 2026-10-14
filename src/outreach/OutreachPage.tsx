@@ -3,6 +3,7 @@ import type { Contact, CrmData, Opportunity } from "../types";
 import type { EmailProviderId, EmailProviderSettings, GmailConnection, OutreachMessage, OutreachStats, OutreachThread } from "../types/outreach";
 import {
   beginGmailConnection,
+  createAiReplyDraft,
   createAiOutreachDraft,
   disconnectGmail,
   getEmailProviderSettings,
@@ -17,6 +18,7 @@ import {
 } from "../data/outreach";
 
 type Props = { data: CrmData; senderName: string };
+type OutreachConversation = { key: string; messages: OutreachMessage[]; latest: OutreachMessage; first: OutreachMessage };
 
 const emptyStats: OutreachStats = { sent: 0, replies: 0, replyRate: 0, clicks: 0, delivered: 0, bounced: 0, opened: 0 };
 const starterBody = "Hi {{firstName}},\n\nI’m reaching out about {{opportunity}}. Based on {{company}}’s work, I think we could help with the next step.\n\nWould you be open to a short conversation this week?\n\nBest,\n{{senderName}}";
@@ -36,6 +38,22 @@ function interpolate(text: string, contact: Contact | undefined, company: string
 function formatDate(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
+}
+
+function groupOutreachConversations(messages: OutreachMessage[]): OutreachConversation[] {
+  const groups = new Map<string, OutreachMessage[]>();
+  for (const message of messages) {
+    const key = message.contactId || (message.providerThreadId
+      ? `${message.provider}:${message.providerThreadId}`
+      : message.id);
+    const group = groups.get(key) || [];
+    group.push(message);
+    groups.set(key, group);
+  }
+  return [...groups.entries()].map(([key, rows]) => {
+    const ordered = rows.slice().sort((a, b) => (a.sentAt || "").localeCompare(b.sentAt || ""));
+    return { key, messages: ordered, first: ordered[0], latest: ordered[ordered.length - 1] };
+  }).sort((a, b) => (b.latest.sentAt || "").localeCompare(a.latest.sentAt || ""));
 }
 
 function cleanConversationBody(value: string) {
@@ -93,12 +111,21 @@ export default function OutreachPage({ data, senderName }: Props) {
   const selectedProvider = providerOverride || providerSettings?.defaultProvider || "gmail";
   const selectedProviderStatus = providerSettings?.providers.find((item) => item.provider === selectedProvider);
   const canCompose = Boolean(providerSettings?.providers.some((item) => item.eligibleForSending));
-  const allOutreachMessages = messages.filter((message) => {
+  const conversations = useMemo(() => groupOutreachConversations(messages), [messages]);
+  const allOutreachConversations = conversations.filter(({ messages: threadMessages }) => {
     const search = outreachSearch.trim().toLowerCase();
-    return !search || [message.recipientName, message.recipient, message.subject, message.status, message.provider]
-      .some((value) => (value || "").toLowerCase().includes(search));
+    return !search || threadMessages.some((message) =>
+      [message.recipientName, message.recipient, message.subject, message.status, message.provider]
+        .some((value) => (value || "").toLowerCase().includes(search)));
   });
-  const renderOutreachTable = (rows: OutreachMessage[]) => <div className="outreach-table-wrap"><table className="outreach-table"><thead><tr><th>RECIPIENT</th><th>SUBJECT</th><th>PROVIDER</th><th>STATUS</th><th>SENT</th><th>CLICKS</th><th /></tr></thead><tbody>{rows.map((message) => <tr key={message.id}><td><strong>{message.recipientName}</strong><small>{message.recipient}</small></td><td><button className="outreach-subject-button" onClick={() => setSelectedThread(message)}>{message.subject || "(No subject)"}</button><small>{message.opportunityId ? data.opportunities.find((item) => item.id === message.opportunityId)?.title || "Opportunity" : "Click to view conversation"}</small></td><td><strong>{message.provider === "ses" ? "Amazon SES" : message.provider === "resend" ? "Resend" : "Gmail"}</strong><small>{message.senderAccount || "Sender not recorded"}</small></td><td><span className={"outreach-status " + message.status}>{message.status === "replied" ? "Replied" : message.status === "failed" ? "Failed" : message.status === "sending" ? "Sending" : message.status === "accepted" ? "Accepted" : message.status === "delivered" ? "Delivered" : message.status === "bounced" ? "Bounced" : message.status === "complained" ? "Complaint" : "Sent"}</span>{message.repliedAt && <small>{formatDate(message.repliedAt)}</small>}</td><td>{message.sentAt ? formatDate(message.sentAt) : "—"}</td><td>{message.clickCount}</td><td>{message.gmailThreadUrl && <a className="outreach-open-link" href={message.gmailThreadUrl} target="_blank" rel="noreferrer">Open in Gmail ↗</a>}</td></tr>)}</tbody></table></div>;
+  const renderOutreachTable = (rows: OutreachConversation[]) => <div className="outreach-table-wrap"><table className="outreach-table"><thead><tr><th>RECIPIENT</th><th>CONVERSATION</th><th>PROVIDER</th><th>STATUS</th><th>LAST MESSAGE</th><th>CLICKS</th><th /></tr></thead><tbody>{rows.map(({ key, messages: threadMessages, latest, first }) => {
+    const clicks = threadMessages.reduce((total, item) => total + item.clickCount, 0);
+    const gmailUrl = threadMessages.find((item) => item.gmailThreadUrl)?.gmailThreadUrl;
+    const opportunityTitle = first.opportunityId ? data.opportunities.find((item) => item.id === first.opportunityId)?.title : undefined;
+    const status = threadMessages.some((item) => item.status === "replied") ? "replied" : latest.status;
+    const repliedAt = threadMessages.map((item) => item.repliedAt).filter((value): value is string => Boolean(value)).sort().at(-1);
+    return <tr key={key}><td><strong>{latest.recipientName}</strong><small>{latest.recipient}</small></td><td><button className="outreach-subject-button" onClick={() => setSelectedThread(latest)}>{first.subject || "(No subject)"}</button><small>{threadMessages.length} {threadMessages.length === 1 ? "sent email" : "sent emails"}{opportunityTitle ? ` · ${opportunityTitle}` : " · Open chat"}</small></td><td><strong>{latest.provider === "ses" ? "Amazon SES" : latest.provider === "resend" ? "Resend" : "Gmail"}</strong><small>{latest.senderAccount || "Sender not recorded"}</small></td><td><span className={"outreach-status " + status}>{status === "replied" ? "Replied" : status === "failed" ? "Failed" : status === "sending" ? "Sending" : status === "accepted" ? "Accepted" : status === "delivered" ? "Delivered" : status === "bounced" ? "Bounced" : status === "complained" ? "Complaint" : "Sent"}</span>{repliedAt && <small>{formatDate(repliedAt)}</small>}</td><td>{latest.sentAt ? formatDate(latest.sentAt) : "—"}</td><td>{clicks}</td><td>{gmailUrl && <a className="outreach-open-link" href={gmailUrl} target="_blank" rel="noreferrer">Open in Gmail ↗</a>}</td></tr>;
+  })}</tbody></table></div>;
 
   const refresh = async () => {
     setError("");
@@ -253,7 +280,7 @@ export default function OutreachPage({ data, senderName }: Props) {
   return <div className="outreach-page">
     {showAllOutreach ? <section className="panel outreach-all-panel">
       <div className="outreach-all-heading">
-        <div><span className="outreach-kicker">OUTREACH HISTORY</span><h2>All outreach</h2><p>{messages.length} messages sent to prospects</p></div>
+        <div><span className="outreach-kicker">OUTREACH HISTORY</span><h2>Conversations</h2><p>{conversations.length} conversations · {messages.length} sent emails tracked</p></div>
         <div className="outreach-list-actions">
           <button className="button button-secondary" onClick={() => setShowAllOutreach(false)}>← Recent outreach</button>
           {connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}
@@ -263,7 +290,7 @@ export default function OutreachPage({ data, senderName }: Props) {
       {error && <div className="outreach-message error-message" role="alert">{error}</div>}
       {notice && <div className="outreach-message success-message" role="status">{notice}</div>}
       <label className="outreach-all-search"><span>Search all outreach</span><input value={outreachSearch} onChange={(event) => setOutreachSearch(event.target.value)} placeholder="Search prospect, email, subject, status or provider" /></label>
-      {loading ? <div className="outreach-empty">Loading outreach…</div> : allOutreachMessages.length ? renderOutreachTable(allOutreachMessages) : <div className="outreach-empty"><strong>{messages.length ? "No matching outreach" : "No outreach sent yet"}</strong><p>{messages.length ? "Try another search." : "Messages sent to prospects will appear here."}</p></div>}
+      {loading ? <div className="outreach-empty">Loading conversations…</div> : allOutreachConversations.length ? renderOutreachTable(allOutreachConversations) : <div className="outreach-empty"><strong>{messages.length ? "No matching conversations" : "No conversations yet"}</strong><p>{messages.length ? "Try another search." : "Messages sent to prospects will appear here."}</p></div>}
     </section> : <>
     <section className="outreach-intro panel">
       <div><span className="outreach-kicker">PERSONALIZED OUTREACH</span><h2>Start a conversation that moves work forward.</h2><p>Send a tailored email, keep the conversation beside the prospect, and see replies and tracked-link clicks in one place.</p></div>
@@ -288,8 +315,8 @@ export default function OutreachPage({ data, senderName }: Props) {
     </div>
 
     <section className="panel outreach-list-panel">
-      <div className="outreach-list-heading"><div><h3>Recent outreach</h3><p>Latest messages, replies, and tracked-link clicks</p></div><div className="outreach-list-actions"><button className="button button-secondary" onClick={() => setShowAllOutreach(true)}>View all outreach</button>{connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}<button className="button button-primary" disabled={!canCompose} onClick={openComposer}>Compose email</button></div></div>
-      {loading ? <div className="outreach-empty">Loading outreach…</div> : messages.length ? renderOutreachTable(messages.slice(0, 8)) : <div className="outreach-empty"><span className="outreach-empty-icon">↗</span><strong>{canCompose ? "No outreach sent yet" : "Configure an email provider"}</strong><p>{canCompose ? "Choose a contact and write a short, relevant message to get started." : "Connect Gmail, or activate a verified API provider in Email Providers settings."}</p>{canCompose && <button className="button button-primary" onClick={openComposer}>Compose your first email</button>}</div>}
+      <div className="outreach-list-heading"><div><h3>Recent conversations</h3><p>Messages and replies stay together in each conversation</p></div><div className="outreach-list-actions"><button className="button button-secondary" onClick={() => setShowAllOutreach(true)}>View all</button>{connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}<button className="button button-primary" disabled={!canCompose} onClick={openComposer}>Compose email</button></div></div>
+      {loading ? <div className="outreach-empty">Loading conversations…</div> : conversations.length ? renderOutreachTable(conversations.slice(0, 8)) : <div className="outreach-empty"><span className="outreach-empty-icon">↗</span><strong>{canCompose ? "No conversations yet" : "Configure an email provider"}</strong><p>{canCompose ? "Choose a contact and write a short, relevant message to get started." : "Connect Gmail, or activate a verified API provider in Email Providers settings."}</p>{canCompose && <button className="button button-primary" onClick={openComposer}>Compose your first email</button>}</div>}
     </section>
     </>}
 
@@ -322,6 +349,8 @@ export function OutreachThreadDialog({ message, senderName = "", onReplySent, on
   const [error, setError] = useState("");
   const [replyBody, setReplyBody] = useState("");
   const [sendingReply, setSendingReply] = useState(false);
+  const [aiReplyBusy, setAiReplyBusy] = useState(false);
+  const [aiConfigured, setAiConfigured] = useState(false);
   useEffect(() => {
     let alive = true;
     void getOutreachThread(message.id).then((result) => {
@@ -331,6 +360,15 @@ export function OutreachThreadDialog({ message, senderName = "", onReplySent, on
     }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [message.id]);
+  useEffect(() => {
+    let alive = true;
+    void getGroqDraftSettings().then((settings) => {
+      if (alive) setAiConfigured(settings.configured);
+    }).catch((reason: unknown) => {
+      if (alive) setError(reason instanceof Error ? reason.message : "Could not check AI reply settings.");
+    });
+    return () => { alive = false; };
+  }, []);
 
   const orderedMessages = thread?.messages.slice().sort((a, b) => {
     const aTime = Date.parse(a.sentAt);
@@ -339,6 +377,20 @@ export function OutreachThreadDialog({ message, senderName = "", onReplySent, on
   }) || [];
   const canReply = ["sent", "accepted", "delivered", "replied"].includes(message.status);
 
+  const draftReplyWithAi = async () => {
+    if (aiReplyBusy || sendingReply || !aiConfigured) return;
+    setAiReplyBusy(true);
+    setError("");
+    try {
+      const draft = await createAiReplyDraft(message.id, { senderName });
+      setReplyBody(draft.body);
+    } catch (reason: unknown) {
+      setError(reason instanceof Error ? reason.message : "Could not draft an AI reply.");
+    } finally {
+      setAiReplyBusy(false);
+    }
+  };
+
   const submitReply = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const body = replyBody.trim();
@@ -346,7 +398,7 @@ export function OutreachThreadDialog({ message, senderName = "", onReplySent, on
     setSendingReply(true);
     setError("");
     try {
-      const sent = await sendOutreachReply(message.id, {
+      const sent = await sendOutreachReply(thread?.replyTargetId || message.id, {
         body,
         senderName,
         idempotencyKey: window.crypto.randomUUID(),
@@ -381,9 +433,11 @@ export function OutreachThreadDialog({ message, senderName = "", onReplySent, on
         </article>)}
       </div>}
       {canReply && <form className="outreach-thread-reply" onSubmit={submitReply}>
+        <button className="button button-secondary outreach-ai-reply" type="button" disabled={loading || sendingReply || aiReplyBusy || !aiConfigured} onClick={() => void draftReplyWithAi()}>{aiReplyBusy ? "Drafting…" : "✦ AI"}</button>
         <textarea value={replyBody} onChange={(event) => setReplyBody(event.target.value)} rows={2} maxLength={40000} placeholder={`Reply to ${message.recipientName || message.recipient}…`} aria-label="Write a reply" disabled={sendingReply} />
         <button className="button button-primary" type="submit" disabled={sendingReply || !replyBody.trim()}>{sendingReply ? "Sending…" : "Send"}</button>
       </form>}
+      {!aiConfigured && canReply && <small className="outreach-ai-hint">Configure Groq in Settings → AI email drafting to draft chat replies.</small>}
     </section>
   </div>;
 }
@@ -392,26 +446,22 @@ export function OutreachConversationsDialog({ title, messages, senderName = "", 
   const [query, setQuery] = useState("");
   const [selectedMessage, setSelectedMessage] = useState<OutreachMessage | null>(null);
   const normalizedQuery = query.trim().toLowerCase();
-  const visibleMessages = messages
-    .filter((message) => !normalizedQuery || [message.subject, message.recipientName, message.recipient].some((value) => (value || "").toLowerCase().includes(normalizedQuery)))
-    .slice()
-    .sort((a, b) => {
-      const aTime = Date.parse(a.sentAt || "");
-      const bTime = Date.parse(b.sentAt || "");
-      return (Number.isFinite(bTime) ? bTime : 0) - (Number.isFinite(aTime) ? aTime : 0);
-    });
+  const conversations = groupOutreachConversations(messages);
+  const visibleConversations = conversations.filter(({ messages: threadMessages }) =>
+    !normalizedQuery || threadMessages.some((message) =>
+      [message.subject, message.recipientName, message.recipient].some((value) => (value || "").toLowerCase().includes(normalizedQuery))));
 
   return <>
     <div className="outreach-modal-scrim conversation-hub-scrim" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section className="outreach-conversation-hub" role="dialog" aria-modal="true" aria-labelledby="outreach-conversation-hub-title">
-        <header><div><span className="outreach-kicker">EMAIL HISTORY</span><h2 id="outreach-conversation-hub-title">Conversations with {title}</h2><p>{messages.length} {messages.length === 1 ? "email conversation" : "email conversations"}</p></div><button className="icon-button" aria-label="Close all conversations" onClick={onClose}>×</button></header>
+        <header><div><span className="outreach-kicker">EMAIL HISTORY</span><h2 id="outreach-conversation-hub-title">Conversations with {title}</h2><p>{conversations.length} {conversations.length === 1 ? "conversation" : "conversations"} · {messages.length} messages</p></div><button className="icon-button" aria-label="Close all conversations" onClick={onClose}>×</button></header>
         <label className="conversation-hub-search"><span>Search conversations</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search subject or recipient" /></label>
         <div className="conversation-hub-list">
-          {visibleMessages.map((message) => <button className="conversation-hub-row" key={message.id} onClick={() => setSelectedMessage(message)}>
-            <span className="conversation-hub-copy"><strong>{message.subject || "(No subject)"}</strong><small>{message.recipientName} · {message.recipient}</small></span>
-            <span className="conversation-hub-meta"><strong className={"outreach-status " + message.status}>{message.status}</strong><small>{message.sentAt ? formatDate(message.sentAt) : "Date unavailable"}</small></span>
+          {visibleConversations.map(({ key, messages: threadMessages, latest, first }) => <button className="conversation-hub-row" key={key} onClick={() => setSelectedMessage(latest)}>
+            <span className="conversation-hub-copy"><strong>{first.subject || "(No subject)"}</strong><small>{threadMessages.length} {threadMessages.length === 1 ? "sent email" : "sent emails"} · {latest.recipientName} · {latest.recipient}</small></span>
+            <span className="conversation-hub-meta"><strong className={"outreach-status " + latest.status}>{latest.status}</strong><small>{latest.sentAt ? formatDate(latest.sentAt) : "Date unavailable"}</small></span>
           </button>)}
-          {!visibleMessages.length && <div className="outreach-empty"><strong>{messages.length ? "No matching conversations" : "No emails yet"}</strong><p>{messages.length ? "Try another search." : "Emails sent to this record will appear here."}</p></div>}
+          {!visibleConversations.length && <div className="outreach-empty"><strong>{conversations.length ? "No matching conversations" : "No emails yet"}</strong><p>{conversations.length ? "Try another search." : "Emails sent to this record will appear here."}</p></div>}
         </div>
         <footer><button className="button button-primary" onClick={onClose}>Done</button></footer>
       </section>

@@ -15,6 +15,11 @@ export interface AiEmailDraft {
   model: string;
 }
 
+export interface AiReplyDraft {
+  body: string;
+  model: string;
+}
+
 export interface EmailProviderCapabilities {
   sending: boolean;
   inboundSynchronization: boolean;
@@ -78,6 +83,7 @@ export interface OutreachMessage {
   repliedAt?: string;
   clickCount: number;
   gmailThreadUrl?: string;
+  providerThreadId?: string;
   provider: EmailProviderId;
   senderAccount?: string;
   providerMessageId?: string;
@@ -107,6 +113,7 @@ export interface OutreachThreadMessage {
 export interface OutreachThread {
   threadId: string | null;
   source: "gmail" | "crm";
+  replyTargetId?: string;
   messages: OutreachThreadMessage[];
 }
 

@@ -1,5 +1,5 @@
 import { apiRequest } from "./api";
-import type { AiEmailDraft, CalendarIntegrationSettings, CalendarMeeting, EmailProviderId, EmailProviderSettings, EmailSuppression, GmailConnection, GroqDraftSettings, OutreachMessage, OutreachStats, OutreachThread } from "../types/outreach";
+import type { AiEmailDraft, AiReplyDraft, CalendarIntegrationSettings, CalendarMeeting, EmailProviderId, EmailProviderSettings, EmailSuppression, GmailConnection, GroqDraftSettings, OutreachMessage, OutreachStats, OutreachThread } from "../types/outreach";
 
 export function getGmailConnection() {
   return apiRequest<GmailConnection>("/outreach/gmail/status");
@@ -99,6 +99,13 @@ export function sendOutreachEmail(input: {
 
 export function sendOutreachReply(messageId: string, input: { body: string; senderName: string; idempotencyKey: string }) {
   return apiRequest<OutreachMessage>(`/outreach/messages/${encodeURIComponent(messageId)}/reply`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function createAiReplyDraft(messageId: string, input: { instructions?: string; senderName: string }) {
+  return apiRequest<AiReplyDraft>(`/outreach/messages/${encodeURIComponent(messageId)}/ai-reply`, {
     method: "POST",
     body: JSON.stringify(input),
   });

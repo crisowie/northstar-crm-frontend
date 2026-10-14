@@ -712,6 +712,8 @@ h1, h2, h3, p { margin-top: 0; }
 .outreach-thread-reply textarea:focus { border-color: #9eabe9; box-shadow: 0 0 0 3px rgba(79, 105, 216, .08); }
 .outreach-thread-reply textarea::placeholder { color: #a2aabb; }
 .outreach-thread-reply .button { min-height: 38px; }
+.outreach-thread-reply .outreach-ai-reply { flex: 0 0 auto; }
+.outreach-ai-hint { padding: 0 14px 10px; display: block; color: #8994a7; font-size: 9px; }
 .outreach-history-heading-actions { display: flex; align-items: center; gap: 8px; }
 .view-all-conversations { min-height: 28px; padding: 4px 9px; font-size: 9px; }
 .conversation-hub-scrim { z-index: 110; }
