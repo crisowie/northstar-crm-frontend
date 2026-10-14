@@ -102,8 +102,14 @@ export default function OutreachPage({ data, senderName }: Props) {
   const [aiBusy, setAiBusy] = useState(false);
   const [aiBrief, setAiBrief] = useState("");
 
-  const contacts = useMemo(() => data.contacts.filter((contact) => !contact.archived && contact.email), [data.contacts]);
-  const contact = contacts.find((item) => item.id === contactId);
+  const contactedContactIds = useMemo(() => new Set(messages
+    .filter((message) => message.status !== "failed" || Boolean(message.sentAt))
+    .map((message) => message.contactId)), [messages]);
+  const availableContacts = useMemo(
+    () => data.contacts.filter((item) => !item.archived && item.email && !contactedContactIds.has(item.id)),
+    [data.contacts, contactedContactIds],
+  );
+  const contact = availableContacts.find((item) => item.id === contactId);
   const company = data.companies.find((item) => item.id === contact?.companyId)?.name || "";
   const opportunity = data.opportunities.find((item) => item.id === opportunityId);
   const preview = interpolate(body, contact, company, opportunity?.title || "", senderName);
@@ -222,7 +228,7 @@ export default function OutreachPage({ data, senderName }: Props) {
   };
 
   const openComposer = () => {
-    setContactId(contacts[0]?.id || "");
+    setContactId(availableContacts[0]?.id || "");
     setOpportunityId("");
     setSubject("A proposal for {{company}}");
     setBody(starterBody);
@@ -284,7 +290,7 @@ export default function OutreachPage({ data, senderName }: Props) {
         <div className="outreach-list-actions">
           <button className="button button-secondary" onClick={() => setShowAllOutreach(false)}>← Recent outreach</button>
           {connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}
-          <button className="button button-primary" disabled={!canCompose} onClick={openComposer}>Compose email</button>
+          <button className="button button-primary" disabled={!canCompose || loading || !availableContacts.length} onClick={openComposer}>Compose email</button>
         </div>
       </div>
       {error && <div className="outreach-message error-message" role="alert">{error}</div>}
@@ -315,8 +321,8 @@ export default function OutreachPage({ data, senderName }: Props) {
     </div>
 
     <section className="panel outreach-list-panel">
-      <div className="outreach-list-heading"><div><h3>Recent conversations</h3><p>Messages and replies stay together in each conversation</p></div><div className="outreach-list-actions"><button className="button button-secondary" onClick={() => setShowAllOutreach(true)}>View all</button>{connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}<button className="button button-primary" disabled={!canCompose} onClick={openComposer}>Compose email</button></div></div>
-      {loading ? <div className="outreach-empty">Loading conversations…</div> : conversations.length ? renderOutreachTable(conversations.slice(0, 8)) : <div className="outreach-empty"><span className="outreach-empty-icon">↗</span><strong>{canCompose ? "No conversations yet" : "Configure an email provider"}</strong><p>{canCompose ? "Choose a contact and write a short, relevant message to get started." : "Connect Gmail, or activate a verified API provider in Email Providers settings."}</p>{canCompose && <button className="button button-primary" onClick={openComposer}>Compose your first email</button>}</div>}
+      <div className="outreach-list-heading"><div><h3>Recent conversations</h3><p>Messages and replies stay together in each conversation</p></div><div className="outreach-list-actions"><button className="button button-secondary" onClick={() => setShowAllOutreach(true)}>View all</button>{connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}<button className="button button-primary" disabled={!canCompose || loading || !availableContacts.length} onClick={openComposer}>Compose email</button></div></div>
+      {loading ? <div className="outreach-empty">Loading conversations…</div> : conversations.length ? renderOutreachTable(conversations.slice(0, 8)) : <div className="outreach-empty"><span className="outreach-empty-icon">↗</span><strong>{canCompose ? "No conversations yet" : "Configure an email provider"}</strong><p>{canCompose ? "Choose a contact and write a short, relevant message to get started." : "Connect Gmail, or activate a verified API provider in Email Providers settings."}</p>{canCompose && availableContacts.length > 0 && <button className="button button-primary" onClick={openComposer}>Compose your first email</button>}</div>}
     </section>
     </>}
 
@@ -326,7 +332,7 @@ export default function OutreachPage({ data, senderName }: Props) {
       <form onSubmit={send}>
         <div className="outreach-compose-fields">
           <label>Send through<select value={providerOverride} onChange={(event) => setProviderOverride(event.target.value as EmailProviderId | "")}><option value="">Default · {providerSettings?.providers.find((item) => item.provider === providerSettings.defaultProvider)?.name || "Gmail"}</option>{providerSettings?.providers.filter((item) => item.eligibleForSending).map((item) => <option key={item.provider} value={item.provider}>{item.name}</option>)}</select></label>
-          <label>Contact<select required value={contactId} onChange={(event) => setContactId(event.target.value)}><option value="">Choose a contact</option>{contacts.map((item) => <option key={item.id} value={item.id}>{item.firstName} {item.lastName} · {item.email}</option>)}</select></label>
+          <label>New contact (not previously contacted)<select required value={contactId} onChange={(event) => setContactId(event.target.value)}><option value="">Choose a new contact</option>{availableContacts.map((item) => <option key={item.id} value={item.id}>{item.firstName} {item.lastName} · {item.email}</option>)}</select>{!availableContacts.length && <small className="field-help">All eligible contacts already have an outreach conversation. Continue existing chats from Recent conversations.</small>}</label>
           <label>Related opportunity <span className="optional-label">Optional</span><select value={opportunityId} onChange={(event) => setOpportunityId(event.target.value)}><option value="">No opportunity selected</option>{data.opportunities.filter((item) => !item.archived && (!contact || !contact.companyId || item.companyId === contact.companyId)).map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
           <label>Subject<input required value={subject} onChange={(event) => setSubject(event.target.value)} /></label>
           <div className="merge-field-note"><strong>Personalize with fields</strong><span>{"{{firstName}}"} · {"{{company}}"} · {"{{opportunity}}"} · {"{{senderName}}"}</span></div>
