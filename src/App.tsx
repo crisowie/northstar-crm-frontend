@@ -239,7 +239,25 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
     if (duplicate) { notify(duplicate); return false; }
 
     mutate((copy) => {
-      const body: any = { ...existing, ...form, id, updatedAt: date, createdAt: existing?.createdAt || date };
+      const recordForm = { ...form };
+      if (kind === "contact" && !existing) {
+        const companyNameInput = (recordForm.companyName || "").trim();
+        delete recordForm.companyName;
+        if (companyNameInput) {
+          const matchedCompany = copy.companies.find((company) => company.name.trim().toLowerCase() === companyNameInput.toLowerCase());
+          if (matchedCompany) recordForm.companyId = matchedCompany.id;
+          else {
+            const companyId = newId("co");
+            copy.companies.unshift({
+              id: companyId, name: companyNameInput, website: "", industry: "", size: "", location: "",
+              description: "", status: "Prospect", tags: "", notes: "", createdAt: date, updatedAt: date,
+            });
+            recordForm.companyId = companyId;
+            addActivity(copy, "company", "Company created", companyNameInput, "company", companyId);
+          }
+        } else recordForm.companyId = "";
+      }
+      const body: any = { ...existing, ...recordForm, id, updatedAt: date, createdAt: existing?.createdAt || date };
       if (kind === "contact") {
         body.tags = form.tags || "";
         if (body.status === "Inactive") body.archived = existing?.archived || false;
@@ -809,8 +827,16 @@ function fieldsFor(kind: Kind, data: CrmData, taskType?: string): Field[] {
 }
 
 function RecordDialog({ kind, record, data, onClose, onSave }: { kind: Kind; record?: any; data: CrmData; onClose: () => void; onSave: (form: Record<string, string>) => boolean }) {
-  const [form, setForm] = useState<Record<string, string>>(() => ({ owner: "You", status: kind === "task" ? "To Do" : kind === "job" ? "New" : kind === "opportunity" ? data.pipelineStages[0] : kind === "company" ? "Active" : "Lead", priority: "Medium", source: "Referral", type: "Follow-up", recordType: "opportunity", ...record }));
-  const fields = fieldsFor(kind, data, form.recordType);
+  const [form, setForm] = useState<Record<string, string>>(() => ({
+    owner: "You", status: kind === "task" ? "To Do" : kind === "job" ? "New" : kind === "opportunity" ? data.pipelineStages[0] : kind === "company" ? "Active" : "Lead",
+    priority: "Medium", source: "Referral", type: "Follow-up", recordType: "opportunity",
+    ...(kind === "contact" && !record ? { companyName: "" } : {}),
+    ...record,
+  }));
+  const fields = fieldsFor(kind, data, form.recordType).map((field) =>
+    kind === "contact" && !record && field.key === "companyId"
+      ? { ...field, key: "companyName", type: "text", options: undefined, placeholder: "Enter company name" }
+      : field);
   const setValue = (key: string, value: string) => setForm((old) => key === "recordType" ? { ...old, recordType: value, recordId: "" } : { ...old, [key]: value });
   const optionLabel = (field: Field, value: string) => {
     if (!value) return field.key === "companyId" ? "No company" : field.key === "contactId" ? "No contact" : "None";
