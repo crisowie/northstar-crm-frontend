@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Contact, CrmData, Opportunity } from "../types";
 import type { EmailProviderId, EmailProviderSettings, GmailConnection, OutreachMessage, OutreachStats, OutreachThread } from "../types/outreach";
 import {
@@ -7,7 +7,6 @@ import {
   createAiOutreachDraft,
   disconnectGmail,
   getEmailProviderSettings,
-  getGmailConnection,
   getGroqDraftSettings,
   getOutreachMessages,
   getOutreachStats,
@@ -79,7 +78,7 @@ function cleanConversationBody(value: string) {
 }
 
 export default function OutreachPage({ data, senderName }: Props) {
-  const [connection, setConnection] = useState<GmailConnection>({ connected: false });
+  const [connection, setConnection] = useState<GmailConnection | null>(null);
   const [providerSettings, setProviderSettings] = useState<EmailProviderSettings | null>(null);
   const [messages, setMessages] = useState<OutreachMessage[]>([]);
   const [stats, setStats] = useState<OutreachStats>(emptyStats);
@@ -101,6 +100,7 @@ export default function OutreachPage({ data, senderName }: Props) {
   const [aiConfigured, setAiConfigured] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiBrief, setAiBrief] = useState("");
+  const backgroundSyncInFlight = useRef(false);
 
   const contactedContactIds = useMemo(() => new Set(messages
     .filter((message) => message.status !== "failed" || Boolean(message.sentAt))
@@ -133,15 +133,20 @@ export default function OutreachPage({ data, senderName }: Props) {
     return <tr key={key}><td><strong>{latest.recipientName}</strong><small>{latest.recipient}</small></td><td><button className="outreach-subject-button" onClick={() => setSelectedThread(latest)}>{first.subject || "(No subject)"}</button><small>{threadMessages.length} {threadMessages.length === 1 ? "sent email" : "sent emails"}{opportunityTitle ? ` · ${opportunityTitle}` : " · Open chat"}</small></td><td><strong>{latest.provider === "ses" ? "Amazon SES" : latest.provider === "resend" ? "Resend" : "Gmail"}</strong><small>{latest.senderAccount || "Sender not recorded"}</small></td><td><span className={"outreach-status " + status}>{status === "replied" ? "Replied" : status === "failed" ? "Failed" : status === "sending" ? "Sending" : status === "accepted" ? "Accepted" : status === "delivered" ? "Delivered" : status === "bounced" ? "Bounced" : status === "complained" ? "Complaint" : "Sent"}</span>{repliedAt && <small>{formatDate(repliedAt)}</small>}</td><td>{latest.sentAt ? formatDate(latest.sentAt) : "—"}</td><td>{clicks}</td><td>{gmailUrl && <a className="outreach-open-link" href={gmailUrl} target="_blank" rel="noreferrer">Open in Gmail ↗</a>}</td></tr>;
   })}</tbody></table></div>;
 
+  const applyProviderSettings = (settings: EmailProviderSettings) => {
+    const gmail = settings.providers.find((item) => item.provider === "gmail");
+    setConnection({ connected: Boolean(gmail?.connected), ...(gmail?.senderEmail ? { email: gmail.senderEmail } : {}) });
+    setProviderSettings(settings);
+  };
+
   const refresh = async () => {
     setError("");
-    const [nextConnection, nextMessages, nextStats, nextProviders] = await Promise.all([
-      getGmailConnection(), getOutreachMessages(), getOutreachStats(), getEmailProviderSettings(),
+    const [nextMessages, nextStats, nextProviders] = await Promise.all([
+      getOutreachMessages(), getOutreachStats(), getEmailProviderSettings(),
     ]);
-    setConnection(nextConnection);
     setMessages(nextMessages);
     setStats(nextStats);
-    setProviderSettings(nextProviders);
+    applyProviderSettings(nextProviders);
   };
 
   useEffect(() => {
@@ -155,26 +160,47 @@ export default function OutreachPage({ data, senderName }: Props) {
       window.history.replaceState({}, "", window.location.pathname);
     }
     const load = async () => {
-      const nextConnection = await getGmailConnection();
-      if (nextConnection.connected) await syncOutreachReplies().catch(() => undefined);
-      const [nextMessages, nextStats, nextProviders] = await Promise.all([getOutreachMessages(), getOutreachStats(), getEmailProviderSettings()]);
+      const [nextMessages, nextStats, nextProviders] = await Promise.all([
+        getOutreachMessages(), getOutreachStats(), getEmailProviderSettings(),
+      ]);
       if (!alive) return;
-      setConnection(nextConnection);
       setMessages(nextMessages);
       setStats(nextStats);
-      setProviderSettings(nextProviders);
+      applyProviderSettings(nextProviders);
+      const gmail = nextProviders.providers.find((item) => item.provider === "gmail");
+      if (gmail?.connected) {
+        backgroundSyncInFlight.current = true;
+        void syncOutreachReplies().then(async (result) => {
+          if (!alive || (result.replies === 0 && !result.correlatedReplies)) return;
+          const [updatedMessages, updatedStats] = await Promise.all([getOutreachMessages(), getOutreachStats()]);
+          if (alive) { setMessages(updatedMessages); setStats(updatedStats); }
+        }).catch(() => undefined).finally(() => { backgroundSyncInFlight.current = false; });
+      }
     };
     void load().catch((reason: unknown) => {
       if (alive) setError(reason instanceof Error ? reason.message : "Could not load outreach data.");
     }).finally(() => { if (alive) setLoading(false); });
     const timer = window.setInterval(async () => {
-      if (!alive || document.visibilityState !== "visible") return;
+      if (!alive || document.visibilityState !== "visible" || backgroundSyncInFlight.current) return;
+      backgroundSyncInFlight.current = true;
       try {
-        const status = await getGmailConnection();
-        if (status.connected) await syncOutreachReplies();
-        const [nextMessages, nextStats, nextProviders] = await Promise.all([getOutreachMessages(), getOutreachStats(), getEmailProviderSettings()]);
-        if (alive) { setConnection(status); setMessages(nextMessages); setStats(nextStats); setProviderSettings(nextProviders); }
+        const [nextMessages, nextStats, nextProviders] = await Promise.all([
+          getOutreachMessages(), getOutreachStats(), getEmailProviderSettings(),
+        ]);
+        if (!alive) return;
+        setMessages(nextMessages);
+        setStats(nextStats);
+        applyProviderSettings(nextProviders);
+        const gmail = nextProviders.providers.find((item) => item.provider === "gmail");
+        if (!gmail?.connected) return;
+        const result = await syncOutreachReplies();
+        if (alive && (result.replies > 0 || (result.correlatedReplies || 0) > 0)) {
+          const [updatedMessages, updatedStats] = await Promise.all([getOutreachMessages(), getOutreachStats()]);
+          setMessages(updatedMessages);
+          setStats(updatedStats);
+        }
       } catch { /* The manual sync action displays recoverable mailbox errors. */ }
+      finally { backgroundSyncInFlight.current = false; }
     }, 60_000);
     return () => { alive = false; window.clearInterval(timer); };
   }, []);
@@ -289,7 +315,7 @@ export default function OutreachPage({ data, senderName }: Props) {
         <div><span className="outreach-kicker">OUTREACH HISTORY</span><h2>Conversations</h2><p>{conversations.length} conversations · {messages.length} sent emails tracked</p></div>
         <div className="outreach-list-actions">
           <button className="button button-secondary" onClick={() => setShowAllOutreach(false)}>← Recent outreach</button>
-          {connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}
+          {connection?.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}
           <button className="button button-primary" disabled={!canCompose || loading || !availableContacts.length} onClick={openComposer}>Compose email</button>
         </div>
       </div>
@@ -301,9 +327,9 @@ export default function OutreachPage({ data, senderName }: Props) {
     <section className="outreach-intro panel">
       <div><span className="outreach-kicker">PERSONALIZED OUTREACH</span><h2>Start a conversation that moves work forward.</h2><p>Send a tailored email, keep the conversation beside the prospect, and see replies and tracked-link clicks in one place.</p></div>
       <div className="gmail-connect-card">
-        <span className={"gmail-mark " + (connection.connected ? "connected" : "")}>G</span>
-        <div className="gmail-connect-copy"><strong>{connection.connected ? connection.email : "Connect Gmail"}</strong><small>{connection.connected ? "Connected for sending and reply checks" : "Authorize your work mailbox to get started"}</small></div>
-        {connection.connected ? <button className="button button-secondary" disabled={busy} onClick={disconnect}>Disconnect</button> : <button className="button button-primary" disabled={busy} onClick={connect}>{busy ? "Connecting…" : "Connect Gmail"}</button>}
+        <span className={"gmail-mark " + (connection?.connected ? "connected" : "")}>G</span>
+        <div className="gmail-connect-copy"><strong>{connection === null ? "Checking Gmail…" : connection.connected ? connection.email : "Connect Gmail"}</strong><small>{connection === null ? "Checking your connected mailbox" : connection.connected ? "Connected for sending and reply checks" : "Authorize your work mailbox to get started"}</small></div>
+        {connection?.connected ? <button className="button button-secondary" disabled={busy} onClick={disconnect}>Disconnect</button> : <button className="button button-primary" disabled={busy || connection === null} onClick={connect}>{connection === null ? "Checking…" : busy ? "Connecting…" : "Connect Gmail"}</button>}
       </div>
     </section>
 
@@ -321,7 +347,7 @@ export default function OutreachPage({ data, senderName }: Props) {
     </div>
 
     <section className="panel outreach-list-panel">
-      <div className="outreach-list-heading"><div><h3>Recent conversations</h3><p>Messages and replies stay together in each conversation</p></div><div className="outreach-list-actions"><button className="button button-secondary" onClick={() => setShowAllOutreach(true)}>View all</button>{connection.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}<button className="button button-primary" disabled={!canCompose || loading || !availableContacts.length} onClick={openComposer}>Compose email</button></div></div>
+    <div className="outreach-list-heading"><div><h3>Recent conversations</h3><p>Messages and replies stay together in each conversation</p></div><div className="outreach-list-actions"><button className="button button-secondary" onClick={() => setShowAllOutreach(true)}>View all</button>{connection?.connected && <button className="button button-secondary" disabled={busy} onClick={syncReplies}>{busy ? "Checking…" : "Sync replies"}</button>}<button className="button button-primary" disabled={!canCompose || loading || !availableContacts.length} onClick={openComposer}>Compose email</button></div></div>
       {loading ? <div className="outreach-empty">Loading conversations…</div> : conversations.length ? renderOutreachTable(conversations.slice(0, 8)) : <div className="outreach-empty"><span className="outreach-empty-icon">↗</span><strong>{canCompose ? "No conversations yet" : "Configure an email provider"}</strong><p>{canCompose ? "Choose a contact and write a short, relevant message to get started." : "Connect Gmail, or activate a verified API provider in Email Providers settings."}</p>{canCompose && availableContacts.length > 0 && <button className="button button-primary" onClick={openComposer}>Compose your first email</button>}</div>}
     </section>
     </>}
@@ -340,7 +366,7 @@ export default function OutreachPage({ data, senderName }: Props) {
           <div className="ai-draft-actions"><button className="button button-secondary" type="button" disabled={!aiConfigured || aiBusy || busy || !contact} onClick={() => void draftWithAi()}>{aiBusy ? "Drafting…" : "Draft with AI"}</button>{!aiConfigured && <small>Set up Groq in Settings → AI email drafting.</small>}</div>
           <label>Message<textarea required rows={10} value={body} onChange={(event) => setBody(event.target.value)} /></label>
           {selectedProvider === "resend" && <label className="resend-optin-check"><input type="checkbox" checked={recipientOptedIn} onChange={(event) => setRecipientOptedIn(event.target.checked)} /><span>I confirm this recipient explicitly opted in to receive email from us. Resend cannot be used for unsolicited cold outreach.</span></label>}
-          <div className="tracked-link-note">Links are wrapped by the CRM to record clicks. {selectedProvider === "gmail" ? "Reply sync reads Gmail metadata; full message content is fetched only when you open a conversation." : connection.connected ? `Replies sent to ${connection.email} can be matched by sender, recipient, subject, and time headers; this may be ambiguous.` : "Inbox replies require a separately connected Gmail mailbox. This delivery provider does not sync an inbox."}</div>
+          <div className="tracked-link-note">Links are wrapped by the CRM to record clicks. {selectedProvider === "gmail" ? "Reply sync reads Gmail metadata; full message content is fetched only when you open a conversation." : connection?.connected ? `Replies sent to ${connection.email} can be matched by sender, recipient, subject, and time headers; this may be ambiguous.` : "Inbox replies require a separately connected Gmail mailbox. This delivery provider does not sync an inbox."}</div>
         </div>
         <aside className="email-preview"><span className="outreach-kicker">PREVIEW</span><div className="preview-recipient">To: {contact ? `${contact.firstName} ${contact.lastName} <${contact.email}>` : "Choose a contact"}</div><h3>{previewSubject || "No subject"}</h3><p>{preview || "Your message preview will appear here."}</p></aside>
         <footer><span>{selectedProviderStatus?.senderEmail ? `Sending from ${selectedProviderStatus.senderEmail} via ${selectedProviderStatus.name}` : `${selectedProviderStatus?.name || "Provider"} needs configuration`}</span><button className="button button-secondary" type="button" disabled={busy} onClick={() => setShowComposer(false)}>Cancel</button><button className="button button-primary" disabled={busy || !selectedProviderStatus?.eligibleForSending || !contact?.email || (selectedProvider === "resend" && !recipientOptedIn)}>{busy ? "Sending…" : "Send email"}</button></footer>

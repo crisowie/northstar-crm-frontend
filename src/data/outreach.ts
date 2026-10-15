@@ -40,8 +40,15 @@ export function saveCalendarWebhookSecret(secret: string) {
   });
 }
 
-export function syncOutreachReplies() {
-  return apiRequest<{ checked: number; replies: number; correlatedReplies?: number }>("/outreach/sync", { method: "POST" });
+type OutreachSyncResult = { checked: number; replies: number; correlatedReplies?: number };
+let replySyncInFlight: Promise<OutreachSyncResult> | null = null;
+
+export function syncOutreachReplies(): Promise<OutreachSyncResult> {
+  if (!replySyncInFlight) {
+    replySyncInFlight = apiRequest<OutreachSyncResult>("/outreach/sync", { method: "POST" })
+      .finally(() => { replySyncInFlight = null; });
+  }
+  return replySyncInFlight;
 }
 
 export function getEmailProviderSettings() {
