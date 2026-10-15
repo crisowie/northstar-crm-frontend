@@ -47,7 +47,9 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}): Pr
   });
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = typeof payload?.message === "string" ? payload.message : "The CRM service could not complete the request.";
+    const message = response.status === 413
+      ? "CRM data exceeds the API request size limit. Try importing fewer rows at a time."
+      : typeof payload?.message === "string" ? payload.message : "The CRM service could not complete the request.";
     throw new Error(message);
   }
   return payload as T;
