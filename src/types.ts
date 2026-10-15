@@ -11,6 +11,7 @@ export interface Contact {
   lastName: string;
   email: string;
   phone: string;
+  website?: string;
   country?: string;
   preferredLanguage?: string;
   jobTitle: string;

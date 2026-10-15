@@ -905,6 +905,7 @@ function fieldsFor(kind: Kind, data: CrmData, taskType?: string): Field[] {
   if (kind === "contact") return [
     { key: "firstName", label: "First name", required: true }, { key: "lastName", label: "Last name", required: true },
     { key: "email", label: "Email", type: "email" }, { key: "phone", label: "Phone", type: "tel" },
+    { key: "website", label: "Website", type: "url", placeholder: "https://example.com" },
     { key: "country", label: "Country / region" }, { key: "preferredLanguage", label: "Preferred language", placeholder: "e.g. French" },
     { key: "jobTitle", label: "Job title" }, { key: "companyId", label: "Company", type: "select", options: companyOptions },
     { key: "source", label: "Source", type: "select", options: sourceOptions },
@@ -1017,7 +1018,7 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
   ] : [];
   const title = kind === "contact" ? fullName(record) : kind === "company" ? record.name : record.title;
   const subtitle = kind === "contact" ? [record.jobTitle, company?.name].filter(Boolean).join(" · ") : kind === "company" ? [record.industry, record.location].filter(Boolean).join(" · ") : kind === "job" ? record.referenceId + (company ? " · " + company.name : "") : kind === "opportunity" ? [company?.name, record.category].filter(Boolean).join(" · ") : record.type + (record.owner ? " · " + record.owner : "");
-  const contactWebsite = company?.website || Object.entries(record.customFields || {}).find(([key, value]) => /^(company )?website$/i.test(key) && typeof value === "string")?.[1] || "";
+  const contactWebsite = record.website || company?.website || Object.entries(record.customFields || {}).find(([key, value]) => /^(company )?website$/i.test(key) && typeof value === "string")?.[1] || "";
   const displayFields: [string, any][] = kind === "contact" ? [["Email", record.email], ["Phone", record.phone], ["Company website", contactWebsite], ["Country / region", record.country], ["Preferred language", record.preferredLanguage], ["Source", record.source], ["Status", record.status], ["Last contacted", fmtDate(record.lastContacted)], ["Next follow-up", fmtDate(record.nextFollowUp)], ["Tags", record.tags]]
     : kind === "company" ? [["Website", record.website], ["Industry", record.industry], ["Company size", record.size], ["Location", record.location], ["Status", record.status], ["Tags", record.tags]]
       : kind === "job" ? [["Status", record.status], ["Priority", record.priority], ["Owner", record.owner], ["Start date", fmtDate(record.startDate)], ["Due date", fmtDate(record.dueDate)], ["Completion date", fmtDate(record.completionDate)], ["Category", record.category], ["Next action", record.nextAction]]
