@@ -553,25 +553,29 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
     const headers = parsedRows[0].map(normalizeCsvHeader);
     const rows = parsedRows.slice(1);
     const companyHeaders = new Set([
-      "company", "companyname", "companynameforemails", "website", "companywebsite", "industry", "employees",
+      "company", "companyname", "companynameforemails", "name", "businessname", "website", "companywebsite", "industry", "categories", "employees",
       "companysize", "companyaddress", "companycity", "companystate", "companycountry", "companyphone",
       "companylinkedinurl", "keywords", "technologies", "annualrevenue", "totalfunding", "latestfunding",
       "latestfundingamount", "lastraisedat", "parentcompany", "parentcompanyapollo",
       "parentcompanyapollodata", "parentcompanyapolladataorganizationid", "apolloaccountid", "sic", "siccodes",
       "naics", "naicscodes", "accountowner", "numberofretaillocations",
+      "fulladdress", "street", "municipality", "phone", "phones", "claimed", "reviewcount", "averagerating",
+      "reviewurl", "googlemapsurl", "latitude", "longitude", "domain", "openinghours", "featuredimage",
+      "cid", "placeid", "kgmid", "pluscode", "googleknowledgeurl", "email", "socialmedias",
+      "facebook", "instagram", "twitter", "yelp",
     ]);
     const contactStandardHeaders = new Set([
       "firstname", "first", "lastname", "last", "email", "emailaddress", "phone", "phonenumber", "jobtitle",
       "title", "country", "countryregion", "region", "preferredlanguage", "language", "contactlanguage", "source", "tags",
     ]);
-    let imported = 0, duplicates = 0, companiesCreated = 0;
+    let imported = 0, duplicates = 0, companiesCreated = 0, companiesUpdated = 0;
     mutate((copy) => {
       rows.forEach((row) => {
         const value = (keys: string[]) => {
           const index = headers.findIndex((header) => keys.includes(header));
           return index >= 0 ? (row[index] || "").trim() : "";
         };
-        const companyNameCsv = value(["companyname", "company", "companynameforemails"]);
+        const companyNameCsv = value(["companyname", "company", "companynameforemails", "name", "businessname"]);
         const importedCompanyFields: Record<string, string> = {};
         headers.forEach((header, index) => {
           const fieldValue = (row[index] || "").trim();
@@ -580,11 +584,11 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
           }
         });
         const website = value(["website", "companywebsite"]);
-        const industry = value(["industry"]);
+        const industry = value(["industry", "categories"]);
         const size = value(["employees", "companysize"]);
-        const companyLocation = [
-          value(["companyaddress"]),
-          value(["companycity"]),
+        const companyLocation = value(["fulladdress"]) || [
+          value(["companyaddress", "street"]),
+          value(["companycity", "municipality"]),
           value(["companystate"]),
           value(["companycountry"]),
         ].filter(Boolean).join(", ");
@@ -599,6 +603,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
             company.location = companyLocation || company.location;
             company.customFields = { ...company.customFields, ...importedCompanyFields };
             company.updatedAt = today();
+            companiesUpdated += 1;
           } else {
             company = {
               id: newId("co"), name: companyNameCsv, website, industry, size, location: companyLocation,
@@ -652,7 +657,12 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
         addActivity(copy, "contact", "Contact imported", fullName(contact), "contact", contact.id);
       });
     });
-    notify("Imported " + imported + " contact" + (imported === 1 ? "" : "s") + " and " + companiesCreated + " compan" + (companiesCreated === 1 ? "y" : "ies") + (duplicates ? " · skipped " + duplicates + " duplicate" + (duplicates === 1 ? "" : "s") : ""));
+    if (imported === 0 && companiesCreated === 0 && companiesUpdated === 0 && duplicates === 0) {
+      notify("No records imported. Include a company Name or a contact First Name / Last Name column.");
+    } else {
+      notify("Imported " + imported + " contact" + (imported === 1 ? "" : "s") + " and " + companiesCreated + " compan" + (companiesCreated === 1 ? "y" : "ies") + (companiesUpdated ? " · updated " + companiesUpdated + " existing compan" + (companiesUpdated === 1 ? "y" : "ies") : "") + (duplicates ? " · skipped " + duplicates + " duplicate" + (duplicates === 1 ? "" : "s") : ""));
+      if (imported === 0 && (companiesCreated > 0 || companiesUpdated > 0)) setPage("Companies");
+    }
     if (importRef.current) importRef.current.value = "";
   };
 
@@ -739,7 +749,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
             <div className="panel-toolbar">
               <div className="record-tabs"><button className={filter === "All" ? "active" : ""} onClick={() => setFilter("All")}>All records <span>{(data[plural[currentKind]] as any[]).filter((r) => !r.archived).length}</span></button><button className={filter === "Archived" ? "active" : ""} onClick={() => setFilter("Archived")}>Archived</button></div>
               <div className="toolbar-actions">
-                {currentKind === "contact" && <><input ref={importRef} type="file" accept=".csv,text/csv" className="hidden-input" onChange={(e) => importCsv(e.target.files?.[0])} /><button className="button button-quiet" onClick={() => importRef.current?.click()}><Icon name="upload" size={16} />Import CSV</button></>}
+                {(currentKind === "contact" || currentKind === "company") && <><input ref={importRef} type="file" accept=".csv,text/csv" className="hidden-input" onChange={(e) => importCsv(e.target.files?.[0])} /><button className="button button-quiet" onClick={() => importRef.current?.click()}><Icon name="upload" size={16} />Import CSV</button></>}
                 {currentKind === "job" && <div className="view-toggle"><button aria-label="Table view" className={view === "table" ? "selected" : ""} onClick={() => setView("table")}><Icon name="list" size={16} /></button><button aria-label="Board view" className={view === "board" ? "selected" : ""} onClick={() => setView("board")}><Icon name="board" size={16} /></button></div>}
                 {currentKind === "opportunity" && <div className="view-toggle"><button aria-label="Table view" className={view === "table" ? "selected" : ""} onClick={() => setView("table")}><Icon name="list" size={16} /></button><button aria-label="Pipeline board" className={view === "board" ? "selected" : ""} onClick={() => setView("board")}><Icon name="board" size={16} /></button></div>}
                 <div className="table-search"><Icon name="search" size={16} /><input value={localQuery} onChange={(e) => { setLocalQuery(e.target.value); setPageNo(1); }} placeholder={"Search " + page.toLowerCase() + "..."} /></div>
@@ -788,7 +798,7 @@ const pageDescriptions: Record<Page, string> = {
   Outreach: "Send relevant emails, follow replies, and see which links get attention.",
   Dashboard: "Your relationships, work, and next steps at a glance.",
   Contacts: "Keep every conversation connected to the people behind the work.",
-  Companies: "The organizations and teams you build relationships with.",
+  Companies: "The organizations and teams you build relationships with. Import business leads from CSV as prospects.",
   Jobs: "Track active work from kickoff through completion.",
   Opportunities: "Move potential work forward with a clear pipeline.",
   "Tasks & Follow-ups": "Keep your next steps visible and close the loop.",
