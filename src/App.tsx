@@ -569,8 +569,8 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
       "title", "country", "countryregion", "region", "preferredlanguage", "language", "contactlanguage", "source", "tags",
     ]);
     let imported = 0, duplicates = 0, companiesCreated = 0, companiesUpdated = 0;
-    mutate((copy) => {
-      rows.forEach((row) => {
+    const copy = structuredClone(data);
+    rows.forEach((row) => {
         const value = (keys: string[]) => {
           const index = headers.findIndex((header) => keys.includes(header));
           return index >= 0 ? (row[index] || "").trim() : "";
@@ -655,8 +655,8 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
         };
         copy.contacts.unshift(contact); imported += 1;
         addActivity(copy, "contact", "Contact imported", fullName(contact), "contact", contact.id);
-      });
     });
+    setData(copy);
     if (imported === 0 && companiesCreated === 0 && companiesUpdated === 0 && duplicates === 0) {
       notify("No records imported. Include a company Name or a contact First Name / Last Name column.");
     } else {
