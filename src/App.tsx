@@ -362,6 +362,17 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
     notify(status === "Completed" ? "Task completed" : "Task updated");
   };
 
+  const markCompanyContacted = (company: Company) => {
+    mutate((copy) => {
+      const found = copy.companies.find((item) => item.id === company.id);
+      if (!found) return;
+      found.status = "Contacted";
+      found.updatedAt = today();
+      addActivity(copy, "company", "Company marked contacted", found.name, "company", found.id);
+    });
+    notify(company.name + " marked as contacted");
+  };
+
   const archiveRecord = (kind: Kind, record: any) => {
     if (!window.confirm("Archive this " + kindLabel[kind].toLowerCase() + "? You can find archived records with the Archived filter.")) return;
     mutate((copy) => {
@@ -533,7 +544,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
   const perPage = 7;
   const totalPages = Math.max(1, Math.ceil(sortedItems.length / perPage));
   const visibleItems = sortedItems.slice((pageNo - 1) * perPage, pageNo * perPage);
-  const filterOptions = currentKind === "contact" ? ["Active", "Lead", "Inactive"] : currentKind === "company" ? ["Active", "Prospect", "Inactive"] : currentKind === "job" ? data.jobStatuses : data.pipelineStages;
+  const filterOptions = currentKind === "contact" ? ["Active", "Lead", "Inactive"] : currentKind === "company" ? ["Active", "Prospect", "Contacted", "Inactive"] : currentKind === "job" ? data.jobStatuses : data.pipelineStages;
 
   const saveSettings = () => {
     const stages = pipelineText.split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -795,7 +806,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
 
       {menu === "profile" && <button className="dismiss-overlay" aria-label="Close menu" onClick={() => setMenu(null)} />}
       {dialog && <RecordDialog kind={dialog.kind} record={dialog.record} data={data} onClose={() => setDialog(null)} onSave={(form) => persistRecord(dialog.kind, form, dialog.record)} />}
-      {detail && activeDetail && <DetailPanel kind={detail.kind} record={activeDetail} data={data} senderName={displayName} notes={data.notes.filter((note) => note.recordType === detail.kind && note.recordId === detail.id)} activities={data.activities.filter((item) => item.recordType === detail.kind && item.recordId === detail.id)} getRecordLabel={getRecordLabel} onClose={() => setDetail(null)} onEdit={() => setDialog({ kind: detail.kind, record: activeDetail })} onArchive={() => archiveRecord(detail.kind, activeDetail)} onRestore={() => restoreRecord(detail.kind, activeDetail)} onNote={addNote} noteText={noteText} setNoteText={setNoteText} onOpen={openDetail} onStage={(stage) => detail.kind === "opportunity" && changeOpportunityStage(activeDetail, stage)} onCreateJob={() => detail.kind === "opportunity" && createJobFromOpportunity(activeDetail)} onTaskStatus={(status) => detail.kind === "task" && updateTaskStatus(activeDetail, status)} />}
+      {detail && activeDetail && <DetailPanel kind={detail.kind} record={activeDetail} data={data} senderName={displayName} notes={data.notes.filter((note) => note.recordType === detail.kind && note.recordId === detail.id)} activities={data.activities.filter((item) => item.recordType === detail.kind && item.recordId === detail.id)} getRecordLabel={getRecordLabel} onClose={() => setDetail(null)} onEdit={() => setDialog({ kind: detail.kind, record: activeDetail })} onArchive={() => archiveRecord(detail.kind, activeDetail)} onRestore={() => restoreRecord(detail.kind, activeDetail)} onMarkCompanyContacted={() => detail.kind === "company" && markCompanyContacted(activeDetail)} onNote={addNote} noteText={noteText} setNoteText={setNoteText} onOpen={openDetail} onStage={(stage) => detail.kind === "opportunity" && changeOpportunityStage(activeDetail, stage)} onCreateJob={() => detail.kind === "opportunity" && createJobFromOpportunity(activeDetail)} onTaskStatus={(status) => detail.kind === "task" && updateTaskStatus(activeDetail, status)} />}
       {toast && <div className="toast"><span className="toast-check">✓</span>{toast}</div>}
     </div>
   );
@@ -933,7 +944,7 @@ function fieldsFor(kind: Kind, data: CrmData, taskType?: string): Field[] {
   if (kind === "company") return [
     { key: "name", label: "Company name", required: true }, { key: "website", label: "Website" },
     { key: "industry", label: "Industry" }, { key: "size", label: "Company size", type: "select", options: choices(["Select size", "1–10", "11–50", "51–200", "201–500", "501–1,000", "1,000+"]) },
-    { key: "location", label: "Location" }, { key: "status", label: "Status", type: "select", options: ["Active", "Prospect", "Inactive"] },
+    { key: "location", label: "Location" }, { key: "status", label: "Status", type: "select", options: ["Active", "Prospect", "Contacted", "Inactive"] },
     { key: "tags", label: "Tags", wide: true }, { key: "description", label: "Description", type: "textarea", wide: true },
     { key: "notes", label: "Internal notes", type: "textarea", wide: true },
   ];
@@ -1003,7 +1014,7 @@ function RecordDialog({ kind, record, data, onClose, onSave }: { kind: Kind; rec
   </section></div>;
 }
 
-function DetailPanel({ kind, record, data, senderName, notes, activities, getRecordLabel, onClose, onEdit, onArchive, onRestore, onNote, noteText, setNoteText, onOpen, onStage, onCreateJob, onTaskStatus }: { kind: Kind; record: any; data: CrmData; senderName: string; notes: CrmNote[]; activities: Activity[]; getRecordLabel: (kind: Kind, id: string) => string; onClose: () => void; onEdit: () => void; onArchive: () => void; onRestore: () => void; onNote: () => void; noteText: string; setNoteText: (value: string) => void; onOpen: (kind: Kind, id: string) => void; onStage: (stage: string) => void; onCreateJob: () => void; onTaskStatus: (status: string) => void }) {
+function DetailPanel({ kind, record, data, senderName, notes, activities, getRecordLabel, onClose, onEdit, onArchive, onRestore, onMarkCompanyContacted, onNote, noteText, setNoteText, onOpen, onStage, onCreateJob, onTaskStatus }: { kind: Kind; record: any; data: CrmData; senderName: string; notes: CrmNote[]; activities: Activity[]; getRecordLabel: (kind: Kind, id: string) => string; onClose: () => void; onEdit: () => void; onArchive: () => void; onRestore: () => void; onMarkCompanyContacted: () => void; onNote: () => void; noteText: string; setNoteText: (value: string) => void; onOpen: (kind: Kind, id: string) => void; onStage: (stage: string) => void; onCreateJob: () => void; onTaskStatus: (status: string) => void }) {
   const [outreachMessages, setOutreachMessages] = useState<OutreachMessage[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<OutreachMessage | null>(null);
   const [showAllConversations, setShowAllConversations] = useState(false);
@@ -1054,7 +1065,7 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
   const recordTasks = kind === "task" ? [] : data.tasks.filter((task) => task.recordType === kind && task.recordId === record.id);
   return <div className="detail-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="detail-panel" role="dialog" aria-modal="true"><div className="detail-topbar"><span className="modal-kicker">{kindLabel[kind].toUpperCase()} PROFILE</span><div><button className="icon-button" aria-label="Edit record" onClick={onEdit}><Icon name="note" size={17} /></button><button className="icon-button" aria-label="Close" onClick={onClose}><Icon name="close" size={18} /></button></div></div>
     <div className="detail-hero"><div className={"detail-avatar " + kind}>{kind === "contact" ? initials(title) : <Icon name={kind === "company" ? "building" : kind === "job" ? "briefcase" : kind === "opportunity" ? "target" : "check"} size={21} />}</div><div className="detail-title-wrap"><h2>{title}</h2><p>{subtitle || kindLabel[kind]}</p></div></div>
-    <div className="detail-actions"><button className="button button-primary" onClick={onEdit}><Icon name="note" size={15} />Edit {kindLabel[kind].toLowerCase()}</button>{kind === "company" && phoneHref(companyPhone) && <a className="button button-secondary" href={phoneHref(companyPhone)}>Call company</a>}{kind === "company" && emailHref(companyEmail) && <a className="button button-secondary" href={emailHref(companyEmail)}>Email company</a>}{kind !== "task" && (record.archived ? <button className="button button-secondary" onClick={onRestore}>Restore from archive</button> : <button className="button button-secondary" onClick={onArchive}>Archive</button>)}</div>
+    <div className="detail-actions"><button className="button button-primary" onClick={onEdit}><Icon name="note" size={15} />Edit {kindLabel[kind].toLowerCase()}</button>{kind === "company" && record.status !== "Contacted" && <button className="button button-secondary" onClick={onMarkCompanyContacted}>Mark contacted</button>}{kind === "company" && phoneHref(companyPhone) && <a className="button button-secondary" href={phoneHref(companyPhone)}>Call company</a>}{kind === "company" && emailHref(companyEmail) && <a className="button button-secondary" href={emailHref(companyEmail)}>Email company</a>}{kind !== "task" && (record.archived ? <button className="button button-secondary" onClick={onRestore}>Restore from archive</button> : <button className="button button-secondary" onClick={onArchive}>Archive</button>)}</div>
     {kind === "opportunity" && <div className="stage-control"><label>Current stage<select className="form-input" value={record.stage} onChange={(e) => onStage(e.target.value)}>{data.pipelineStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>{record.stage === "Won" && <div className="job-convert"><div><strong>{record.jobId ? "Related job created" : "Ready to start the work?"}</strong><small>{record.jobId ? "This opportunity is linked to a job." : "Create one job with the company, contact, and scope already attached."}</small></div>{record.jobId ? <button className="button button-secondary" onClick={() => onOpen("job", record.jobId)}>Open job</button> : <button className="button button-primary" onClick={onCreateJob}>Create related job</button>}</div>}</div>}
     {kind === "task" && record.status !== "Completed" && record.status !== "Cancelled" && <button className="complete-task-button" onClick={() => onTaskStatus("Completed")}><span>✓</span>Mark task complete</button>}
     <div className="detail-scroll">

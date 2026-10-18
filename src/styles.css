@@ -235,6 +235,7 @@ h1, h2, h3, p { margin-top: 0; }
 .status-lead, .status-qualified, .status-new { background: #edf1ff; color: #536bd0; }
 .status-in-progress, .status-discovery { background: #edf5ff; color: #5285b5; }
 .status-planned, .status-proposal { background: #f2effb; color: #7e64aa; }
+.status-contacted { background: #eaf6ef; color: #318464; }
 .status-on-hold, .status-negotiation, .status-inactive { background: #fff5e7; color: #ad7a38; }
 .status-cancelled, .status-lost { background: #fff0ee; color: #b96767; }
 .status-prospect, .status-to-do { background: #fff6e9; color: #aa7b3c; }

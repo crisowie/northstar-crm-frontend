@@ -1,5 +1,5 @@
 export type ContactStatus = "Active" | "Lead" | "Inactive";
-export type CompanyStatus = "Active" | "Prospect" | "Inactive";
+export type CompanyStatus = "Active" | "Prospect" | "Contacted" | "Inactive";
 export type JobStatus = "New" | "Planned" | "In Progress" | "On Hold" | "Completed" | "Cancelled";
 export type OpportunityStage = string;
 export type TaskStatus = "To Do" | "In Progress" | "Completed" | "Cancelled";
