@@ -753,6 +753,71 @@ h1, h2, h3, p { margin-top: 0; }
 .calendar-secret-form { margin-top: 12px; display: flex; align-items: flex-end; gap: 9px; }
 .calendar-secret-form .field-label { flex: 1; }
 .calendar-secret-form .form-input { margin-top: 6px; }
+
+/* Telnyx voice dialer */
+.voice-scrim { position: fixed; inset: 0; z-index: 1200; display: flex; justify-content: center; align-items: center; padding: 20px; background: rgba(18, 27, 45, .48); }
+.voice-dialog { display: flex; flex-direction: column; width: min(100%, 560px); max-height: min(92vh, 860px); overflow: hidden; color: #263247; background: #fff; border: 1px solid #e6eaf0; border-radius: 14px; box-shadow: 0 24px 70px rgba(15, 23, 42, .24); }
+.voice-header { display: flex; justify-content: space-between; gap: 18px; padding: 21px 23px 17px; border-bottom: 1px solid #edf0f4; }
+.voice-header h2 { margin: 5px 0 4px; color: #263247; font: 700 18px Manrope, sans-serif; }
+.voice-header p { margin: 0; color: #8490a3; font-size: 11px; }
+.voice-header .icon-button:disabled { opacity: .45; cursor: not-allowed; }
+.voice-content { overflow-y: auto; padding: 18px 23px 22px; }
+.voice-not-configured { display: grid; gap: 5px; margin-bottom: 17px; padding: 12px 14px; color: #6e4d11; background: #fff8e7; border: 1px solid #f2dfb2; border-radius: 8px; font-size: 11px; line-height: 1.5; }
+.voice-not-configured strong { color: #62430c; font-size: 12px; }
+.voice-not-configured small { color: #887348; overflow-wrap: anywhere; }
+.voice-account-note { margin-bottom: 14px; padding: 9px 11px; color: #7e6b42; background: #fffaf0; border-left: 3px solid #ddbc70; border-radius: 4px; font-size: 9px; line-height: 1.45; }
+.voice-contact { display: flex; align-items: center; gap: 11px; margin: 1px 0 18px; padding: 12px; background: #f7f8fc; border: 1px solid #edf0f5; border-radius: 9px; }
+.voice-contact-avatar { display: grid; width: 38px; height: 38px; place-items: center; color: #4e63be; background: #e8ecfb; border-radius: 50%; font-size: 12px; font-weight: 700; }
+.voice-contact div { display: grid; gap: 3px; }
+.voice-contact strong { color: #313e54; font-size: 12px; }
+.voice-contact small { color: #8994a6; font-size: 10px; }
+.voice-field { display: grid; gap: 7px; color: #4c5870; font-size: 10px; font-weight: 650; }
+.voice-phone-row { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 8px; }
+.voice-field input, .voice-field select, .voice-field textarea, .voice-phone-row select, .voice-phone-row input { width: 100%; min-width: 0; color: #344158; background: #fff; border: 1px solid #dfe4ec; border-radius: 7px; outline: none; font: 400 12px Inter, sans-serif; }
+.voice-field input, .voice-field select, .voice-phone-row select, .voice-phone-row input { height: 39px; padding: 0 10px; }
+.voice-field textarea { padding: 9px 10px; resize: vertical; }
+.voice-field input:focus, .voice-field select:focus, .voice-field textarea:focus { border-color: #8998e1; box-shadow: 0 0 0 3px rgba(83, 107, 213, .1); }
+.voice-field input:disabled, .voice-phone-row select:disabled, .voice-phone-row input:disabled { color: #8b96a8; background: #f7f8fa; }
+.voice-validation { margin: 6px 0 0; color: #a15b46; font-size: 10px; }
+.voice-validation-ok { color: #54806c; }
+.voice-state-row { display: flex; align-items: center; gap: 8px; min-height: 38px; margin-top: 14px; color: #49566e; font-size: 11px; }
+.voice-state-row .voice-muted { margin-left: auto; }
+.voice-state-dot { width: 8px; height: 8px; background: #aab3c2; border-radius: 50%; }
+.voice-state-initializing .voice-state-dot, .voice-state-connecting .voice-state-dot, .voice-state-ringing .voice-state-dot { background: #d9a13d; box-shadow: 0 0 0 3px #fff4dc; }
+.voice-state-connected .voice-state-dot { background: #47a27b; box-shadow: 0 0 0 3px #e3f5ec; }
+.voice-state-ending .voice-state-dot { background: #d28b42; }
+.voice-state-ended .voice-state-dot { background: #47a27b; }
+.voice-state-failed .voice-state-dot { background: #cf6a65; }
+.voice-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 0 13px; }
+.voice-controls .button, .voice-outcome .button { min-height: 36px; padding: 0 15px; font-size: 11px; }
+.voice-controls .button:disabled, .voice-outcome .button:disabled { opacity: .55; cursor: not-allowed; }
+.button-danger { color: #fff; background: #c8525c; border: 1px solid #c8525c; }
+.button-danger:hover { background: #b6444f; }
+.voice-secure-note { flex: 1 1 100%; color: #97a1b1; font-size: 9px; }
+.voice-muted { color: #8c97a8; font-size: 10px; }
+.voice-error, .voice-info { margin: 8px 0; padding: 10px 12px; border-radius: 7px; font-size: 10px; line-height: 1.45; }
+.voice-error { color: #9c4146; background: #fff0f0; border: 1px solid #f2d2d3; }
+.voice-info { color: #42664f; background: #edf8f0; border: 1px solid #d6eadb; }
+.voice-outcome { display: grid; gap: 12px; margin: 13px 0 3px; padding: 14px; background: #f8f9fc; border: 1px solid #e9edf4; border-radius: 9px; }
+.voice-outcome h3, .voice-history h3 { margin: 0; color: #3e4b62; font: 700 11px Manrope, sans-serif; }
+.voice-optional { color: #9aa4b3; font-weight: 400; }
+.voice-history { margin-top: 17px; padding-top: 14px; border-top: 1px solid #edf0f4; }
+.voice-history-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.voice-history-heading .text-button { padding: 0; font-size: 9px; }
+.voice-history-item { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 9px 0; border-top: 1px solid #f0f2f6; }
+.voice-history-item > div { display: grid; gap: 3px; }
+.voice-history-item strong { color: #48566c; font-size: 10px; }
+.voice-history-item small { color: #939eae; font-size: 9px; }
+.voice-record-outcome { width: fit-content; padding: 0; color: #536bd5; background: transparent; border: 0; font-size: 9px; font-weight: 650; cursor: pointer; }
+.voice-history-status { flex: 0 0 auto; padding: 4px 7px; color: #63728a; background: #f1f3f7; border-radius: 10px; font-size: 8px; text-transform: capitalize; }
+.voice-history-status.status-connected, .voice-history-status.status-ended { color: #468064; background: #eaf6ee; }
+.voice-history-status.status-failed, .voice-history-status.status-cancelled { color: #9b5758; background: #fcf0f0; }
+@media (max-width: 600px) {
+  .voice-scrim { align-items: flex-end; padding: 0; }
+  .voice-dialog { width: 100%; max-height: 95vh; border-radius: 14px 14px 0 0; }
+  .voice-header { padding: 18px 17px 14px; }
+  .voice-content { padding: 15px 17px 20px; }
+}
 .calendar-setup-instructions > .field-help { display: block; margin-top: 10px; }
 .calendar-meeting-list { margin-top: 12px; display: flex; flex-direction: column; }
 .calendar-meeting-row { display: flex; align-items: center; gap: 17px; min-height: 64px; padding: 11px 3px; border-top: 1px solid #f0f2f6; }

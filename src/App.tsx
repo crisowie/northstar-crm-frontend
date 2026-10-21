@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import type { Activity, Company, Contact, CrmAnalytics, CrmData, CrmNote, CrmTask, Job, Opportunity } from "./types";
 import { emptyWorkspace } from "./data/empty";
 import { getAnalytics, getWorkspace, isMockAuthEnabled, saveWorkspace } from "./data/api";
@@ -8,6 +8,7 @@ import GroqDraftSettings from "./outreach/GroqDraftSettings";
 import { getCalendarMeetings, getOutreachMessages } from "./data/outreach";
 import type { CalendarMeeting, OutreachMessage } from "./types/outreach";
 import MeetingsPage from "./outreach/MeetingsPage";
+const VoiceDialer = lazy(() => import("./voice/VoiceDialer"));
 
 type Kind = "contact" | "company" | "job" | "opportunity" | "task";
 type Page = "Outreach" | "Dashboard" | "Contacts" | "Companies" | "Jobs" | "Opportunities" | "Tasks & Follow-ups" | "Meetings" | "Activities" | "Settings";
@@ -199,6 +200,12 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
     void load();
     return () => { alive = false; };
   }, [loadAttempt]);
+
+  useEffect(() => {
+    const refreshAfterVoiceOutcome = () => { void getWorkspace().then(setData).catch(() => undefined); };
+    window.addEventListener("northstar:voice-outcome", refreshAfterVoiceOutcome);
+    return () => window.removeEventListener("northstar:voice-outcome", refreshAfterVoiceOutcome);
+  }, []);
   useEffect(() => {
     if (!dataReady) return;
     let alive = true;
@@ -1018,6 +1025,7 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
   const [outreachMessages, setOutreachMessages] = useState<OutreachMessage[]>([]);
   const [selectedEmail, setSelectedEmail] = useState<OutreachMessage | null>(null);
   const [showAllConversations, setShowAllConversations] = useState(false);
+  const [showVoiceDialer, setShowVoiceDialer] = useState(false);
   useEffect(() => {
     let alive = true;
     if (kind === "contact" || kind === "opportunity") {
@@ -1065,7 +1073,7 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
   const recordTasks = kind === "task" ? [] : data.tasks.filter((task) => task.recordType === kind && task.recordId === record.id);
   return <div className="detail-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}><aside className="detail-panel" role="dialog" aria-modal="true"><div className="detail-topbar"><span className="modal-kicker">{kindLabel[kind].toUpperCase()} PROFILE</span><div><button className="icon-button" aria-label="Edit record" onClick={onEdit}><Icon name="note" size={17} /></button><button className="icon-button" aria-label="Close" onClick={onClose}><Icon name="close" size={18} /></button></div></div>
     <div className="detail-hero"><div className={"detail-avatar " + kind}>{kind === "contact" ? initials(title) : <Icon name={kind === "company" ? "building" : kind === "job" ? "briefcase" : kind === "opportunity" ? "target" : "check"} size={21} />}</div><div className="detail-title-wrap"><h2>{title}</h2><p>{subtitle || kindLabel[kind]}</p></div></div>
-    <div className="detail-actions"><button className="button button-primary" onClick={onEdit}><Icon name="note" size={15} />Edit {kindLabel[kind].toLowerCase()}</button>{kind === "company" && record.status !== "Contacted" && <button className="button button-secondary" onClick={onMarkCompanyContacted}>Mark contacted</button>}{kind === "company" && phoneHref(companyPhone) && <a className="button button-secondary" href={phoneHref(companyPhone)}>Call company</a>}{kind === "company" && emailHref(companyEmail) && <a className="button button-secondary" href={emailHref(companyEmail)}>Email company</a>}{kind !== "task" && (record.archived ? <button className="button button-secondary" onClick={onRestore}>Restore from archive</button> : <button className="button button-secondary" onClick={onArchive}>Archive</button>)}</div>
+    <div className="detail-actions"><button className="button button-primary" onClick={onEdit}><Icon name="note" size={15} />Edit {kindLabel[kind].toLowerCase()}</button>{kind === "contact" && <button className="button button-secondary" onClick={() => setShowVoiceDialer(true)}><Icon name="phone" size={15} />Call</button>}{kind === "company" && record.status !== "Contacted" && <button className="button button-secondary" onClick={onMarkCompanyContacted}>Mark contacted</button>}{kind === "company" && phoneHref(companyPhone) && <a className="button button-secondary" href={phoneHref(companyPhone)}>Call company</a>}{kind === "company" && emailHref(companyEmail) && <a className="button button-secondary" href={emailHref(companyEmail)}>Email company</a>}{kind !== "task" && (record.archived ? <button className="button button-secondary" onClick={onRestore}>Restore from archive</button> : <button className="button button-secondary" onClick={onArchive}>Archive</button>)}</div>
     {kind === "opportunity" && <div className="stage-control"><label>Current stage<select className="form-input" value={record.stage} onChange={(e) => onStage(e.target.value)}>{data.pipelineStages.map((stage) => <option key={stage}>{stage}</option>)}</select></label>{record.stage === "Won" && <div className="job-convert"><div><strong>{record.jobId ? "Related job created" : "Ready to start the work?"}</strong><small>{record.jobId ? "This opportunity is linked to a job." : "Create one job with the company, contact, and scope already attached."}</small></div>{record.jobId ? <button className="button button-secondary" onClick={() => onOpen("job", record.jobId)}>Open job</button> : <button className="button button-primary" onClick={onCreateJob}>Create related job</button>}</div>}</div>}
     {kind === "task" && record.status !== "Completed" && record.status !== "Cancelled" && <button className="complete-task-button" onClick={() => onTaskStatus("Completed")}><span>✓</span>Mark task complete</button>}
     <div className="detail-scroll">
@@ -1078,6 +1086,7 @@ function DetailPanel({ kind, record, data, senderName, notes, activities, getRec
       <section className="detail-section"><h3>Activity</h3><ActivityList items={activities.slice(0, 8)} onClick={() => {}} getRecordLabel={getRecordLabel} interactive={false} /></section>
       <div className="record-meta">Created {fmtDate(record.createdAt)} · Updated {fmtDate(record.updatedAt)}</div>
     </div>
+    {showVoiceDialer && kind === "contact" && <Suspense fallback={<div className="voice-scrim"><div className="voice-dialog voice-loading">Loading calling tools…</div></div>}><VoiceDialer contactId={record.id} contactName={title} initialPhone={String(record.phone || "")} onClose={() => setShowVoiceDialer(false)} /></Suspense>}
     {showAllConversations && <OutreachConversationsDialog title={title} messages={recordOutreach} senderName={senderName} onClose={() => setShowAllConversations(false)} />}
     {selectedEmail && <OutreachThreadDialog message={selectedEmail} senderName={senderName} onReplySent={(sentReply) => setOutreachMessages((current) => [sentReply, ...current.filter((item) => item.id !== sentReply.id)])} onClose={() => setSelectedEmail(null)} />}
     </aside></div>;
