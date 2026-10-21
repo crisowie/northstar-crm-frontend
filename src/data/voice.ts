@@ -13,6 +13,7 @@ export type VoiceReadiness = {
 export type VoiceCall = {
   id: string;
   contactId: string | null;
+  companyId: string | null;
   destination: string;
   callerId: string;
   provider: "telnyx";
@@ -35,11 +36,13 @@ export type VoiceAuthorization = { id: string; destination: string; callerId: st
 export const getVoiceConfig = () => apiRequest<VoiceReadiness>("/voice/config");
 export const getVoiceToken = () => apiRequest<VoiceSession>("/voice/token", { method: "POST" });
 export const revokeVoiceSession = (sessionId: string) => apiRequest<{ revoked: boolean }>("/voice/session/end", { method: "POST", body: JSON.stringify({ sessionId }) });
-export const authorizeVoiceCall = (body: { sessionId: string; contactId?: string; destination: string; idempotencyKey: string }) =>
+export const authorizeVoiceCall = (body: { sessionId: string; contactId?: string; companyId?: string; destination: string; idempotencyKey: string }) =>
   apiRequest<VoiceAuthorization>("/voice/calls", { method: "POST", body: JSON.stringify(body) });
 export const endVoiceCall = (id: string) => apiRequest<{ call: VoiceCall }>(`/voice/calls/${encodeURIComponent(id)}/end`, { method: "POST" });
 export const getVoiceCall = (id: string) => apiRequest<{ call: VoiceCall }>(`/voice/calls/${encodeURIComponent(id)}`);
 export const saveVoiceOutcome = (id: string, body: { outcome: string; note?: string; followUpDate?: string }) =>
   apiRequest<{ call: VoiceCall }>(`/voice/calls/${encodeURIComponent(id)}/outcome`, { method: "POST", body: JSON.stringify(body) });
-export const getVoiceCalls = (contactId: string) =>
-  apiRequest<{ calls: VoiceCall[] }>(`/voice/calls?contactId=${encodeURIComponent(contactId)}`);
+export const getVoiceCalls = (contactId?: string, companyId?: string) => {
+  const filter = contactId ? `contactId=${encodeURIComponent(contactId)}` : companyId ? `companyId=${encodeURIComponent(companyId)}` : "";
+  return apiRequest<{ calls: VoiceCall[] }>(`/voice/calls${filter ? `?${filter}` : ""}`);
+};

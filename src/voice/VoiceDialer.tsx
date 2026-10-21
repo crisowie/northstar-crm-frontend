@@ -48,12 +48,12 @@ function callPhaseLabel(phase: Phase) {
   return ({ idle: "Ready", initializing: "Requesting microphone and secure session…", connecting: "Connecting…", ringing: "Ringing…", connected: "Connected", ending: "Ending call…", ended: "Call ended", failed: "Call failed" })[phase];
 }
 
-export default function VoiceDialer({ contactId, contactName, initialPhone, onClose }: {
-  contactId: string; contactName: string; initialPhone: string; onClose: () => void;
+export default function VoiceDialer({ contactId, companyId, contactName, initialPhone = "", initialCountry, showHistory = true, onClose }: {
+  contactId?: string; companyId?: string; contactName: string; initialPhone?: string; initialCountry?: "US" | "GB"; showHistory?: boolean; onClose: () => void;
 }) {
   const [config, setConfig] = useState<VoiceReadiness | null>(null);
   const [history, setHistory] = useState<VoiceCall[]>([]);
-  const [country, setCountry] = useState<"US" | "GB">(initialPhone.startsWith("+44") ? "GB" : "US");
+  const [country, setCountry] = useState<"US" | "GB">(initialCountry || (initialPhone.startsWith("+44") ? "GB" : "US"));
   const [phone, setPhone] = useState(initialPhone);
   const [phase, setPhase] = useState<Phase>("idle");
   const [authorizedCallId, setAuthorizedCallId] = useState("");
@@ -76,17 +76,17 @@ export default function VoiceDialer({ contactId, contactName, initialPhone, onCl
   const terminalRef = useRef(false);
 
   const refreshHistory = useCallback(async () => {
-    try { setHistory((await getVoiceCalls(contactId)).calls); } catch { /* Keep the dialer usable when history is temporarily unavailable. */ }
-  }, [contactId]);
+    try { setHistory((await getVoiceCalls(contactId, companyId)).calls); } catch { /* Keep the dialer usable when history is temporarily unavailable. */ }
+  }, [contactId, companyId]);
 
   useEffect(() => {
     let alive = true;
     getVoiceConfig().then((value) => { if (alive) setConfig(value); }).catch((reason: unknown) => {
       if (alive) setError(reason instanceof Error ? reason.message : "Calling configuration could not be loaded.");
     });
-    void refreshHistory();
+    if (showHistory) void refreshHistory();
     return () => { alive = false; };
-  }, [refreshHistory]);
+  }, [refreshHistory, showHistory]);
 
   const cleanupMedia = useCallback(() => {
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -145,7 +145,7 @@ export default function VoiceDialer({ contactId, contactName, initialPhone, onCl
       browserSessionId = session.sessionId;
       sessionIdRef.current = session.sessionId;
       const idempotencyKey = globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
-      const authorization = await authorizeVoiceCall({ sessionId: session.sessionId, contactId, destination: normalized.number, idempotencyKey });
+      const authorization = await authorizeVoiceCall({ sessionId: session.sessionId, ...(contactId ? { contactId } : {}), ...(companyId ? { companyId } : {}), destination: normalized.number, idempotencyKey });
       authCallId = authorization.id;
       callIdRef.current = authorization.id;
       setAuthorizedCallId(authorization.id);
@@ -233,7 +233,7 @@ export default function VoiceDialer({ contactId, contactName, initialPhone, onCl
     setSavingOutcome(true); setError("");
     try {
       const result = await saveVoiceOutcome(serverCall.id, { outcome, note, followUpDate });
-      setServerCall(result.call); setInfo("Outcome saved to the contact activity timeline." );
+      setServerCall(result.call); setInfo(result.call.contactId ? "Outcome saved to the contact activity timeline." : result.call.companyId ? "Outcome saved to the company activity timeline." : "Outcome saved to call history." );
       await refreshHistory();
       window.dispatchEvent(new Event("northstar:voice-outcome"));
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Could not save the call outcome."); }
@@ -295,9 +295,9 @@ export default function VoiceDialer({ contactId, contactName, initialPhone, onCl
           <button type="submit" className="button button-primary" disabled={!outcome || savingOutcome}>{savingOutcome ? "Saving…" : "Save outcome"}</button>
         </form>}
         {serverCall?.outcome && <div className="voice-info">Outcome saved: {serverCall.outcome}{serverCall.followUpDate ? ` · follow-up ${serverCall.followUpDate}` : ""}</div>}
-        <section className="voice-history"><div className="voice-history-heading"><h3>Recent calls</h3><button type="button" className="text-button" onClick={() => void refreshHistory()}>Refresh</button></div>
+        {showHistory && <section className="voice-history"><div className="voice-history-heading"><h3>Recent calls</h3><button type="button" className="text-button" onClick={() => void refreshHistory()}>Refresh</button></div>
           {history.length === 0 ? <p className="voice-muted">No calls are logged for this contact yet.</p> : history.slice(0, 6).map((item) => <article className="voice-history-item" key={item.id}><div><strong>{item.destination}</strong><small>{displayTime(item.startedAt)} · {item.durationSeconds === null ? "duration pending" : `${item.durationSeconds}s`}</small>{item.outcome && <small>{item.outcome}{item.followUpDate ? ` · follow-up ${item.followUpDate}` : ""}</small>}{!item.outcome && terminalServerStates.has(item.status) && <button type="button" className="voice-record-outcome" onClick={() => { setServerCall(item); setPhase(item.status === "failed" ? "failed" : "ended"); setOutcome(""); setNote(item.note || ""); setFollowUpDate(item.followUpDate || ""); callIdRef.current = item.id; terminalRef.current = true; }}>Record outcome</button>}</div><span className={`voice-history-status status-${item.status}`}>{item.status}</span></article>)}
-        </section>
+        </section>}
       </div>
       <audio ref={audioRef} autoPlay />
     </section>
