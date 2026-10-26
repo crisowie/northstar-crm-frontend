@@ -768,7 +768,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
 
         <div className="content-area">
           <div className="page-topline"><div><div className="eyebrow">NORTHSTAR CRM <span className="mock-pill">PRIVATE WORKSPACE</span></div><h1>{page === "Tasks & Follow-ups" ? "Tasks & follow-ups" : page}</h1><p>{pageDescriptions[page]}</p></div>
-            {page !== "Dashboard" && page !== "Activities" && page !== "Settings" && page !== "Outreach" && page !== "Meetings" && page !== "Calls" && <button className="button button-primary" onClick={() => addQuick(currentKind || "task")}><Icon name="plus" size={17} />{page === "Tasks & Follow-ups" ? "Add task" : "Add " + kindLabel[currentKind!].toLowerCase()}</button>}
+            {page !== "Dashboard" && page !== "Activities" && page !== "Settings" && page !== "Outreach" && page !== "Meetings" && page !== "Calls" && page !== "SMS" && <button className="button button-primary" onClick={() => addQuick(currentKind || "task")}><Icon name="plus" size={17} />{page === "Tasks & Follow-ups" ? "Add task" : "Add " + kindLabel[currentKind!].toLowerCase()}</button>}
           </div>
 
           {page === "Outreach" && <OutreachPage data={data} senderName={displayName} />}
