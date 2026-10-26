@@ -10,7 +10,8 @@ export type SmsReadiness = {
 
 export type SmsMessage = {
   id: string;
-  contactId: string;
+  contactId: string | null;
+  companyId: string | null;
   destination: string;
   senderNumber: string;
   body: string;
@@ -24,7 +25,7 @@ export type SmsMessage = {
 
 export const getSmsConfig = () => apiRequest<SmsReadiness>("/sms/config");
 export const getSmsMessages = () => apiRequest<{ messages: SmsMessage[] }>("/sms/messages");
-export const sendSmsMessage = (body: { contactId: string; text: string; consentConfirmed: true; idempotencyKey: string }) =>
+export const sendSmsMessage = (body: { contactId?: string; companyId?: string; text: string; consentConfirmed: true; idempotencyKey: string }) =>
   apiRequest<{ message: SmsMessage; duplicate: boolean }>("/sms/messages", {
     method: "POST",
     body: JSON.stringify(body),
