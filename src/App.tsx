@@ -10,9 +10,10 @@ import type { CalendarMeeting, OutreachMessage } from "./types/outreach";
 import MeetingsPage from "./outreach/MeetingsPage";
 const VoiceDialer = lazy(() => import("./voice/VoiceDialer"));
 const CallsPage = lazy(() => import("./voice/CallsPage"));
+const SmsPage = lazy(() => import("./sms/SmsPage"));
 
 type Kind = "contact" | "company" | "job" | "opportunity" | "task";
-type Page = "Outreach" | "Dashboard" | "Contacts" | "Companies" | "Jobs" | "Opportunities" | "Tasks & Follow-ups" | "Calls" | "Meetings" | "Activities" | "Settings";
+type Page = "Outreach" | "Dashboard" | "Contacts" | "Companies" | "Jobs" | "Opportunities" | "Tasks & Follow-ups" | "Calls" | "SMS" | "Meetings" | "Activities" | "Settings";
 type Field = { key: string; label: string; type?: string; options?: string[]; placeholder?: string; required?: boolean; wide?: boolean };
 type Column = { key: string; label: string; render?: (record: any) => React.ReactNode };
 
@@ -26,6 +27,7 @@ const nav: { page: Page; icon: string; group?: string }[] = [
   { page: "Tasks & Follow-ups", icon: "check" },
   { page: "Meetings", icon: "calendar", group: "INSIGHTS" },
   { page: "Calls", icon: "phone" },
+  { page: "SMS", icon: "sms" },
   { page: "Activities", icon: "activity", group: "INSIGHTS" },
   { page: "Settings", icon: "settings", group: "PREFERENCES" },
 ];
@@ -134,6 +136,7 @@ const iconPaths: Record<string, string> = {
   download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4m4-5 5 5 5-5m-5 5V3",
   note: "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Zm0 0v6h6M8 13h8m-8 4h8",
   mail: "M4 5h16v14H4zM4 7l8 6 8-6",
+  sms: "M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.5 8.5 0 0 1 8 8v.5Z",
   phone: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.4 19.4 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7l.4 2.7a2 2 0 0 1-.6 1.7L7.5 9.5a16 16 0 0 0 6 6l1.4-1.4a2 2 0 0 1 1.7-.6l2.7.4a2 2 0 0 1 1.7 2Z",
   calendar: "M8 2v4m8-4v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2Z",
   spark: "m12 3 1.9 5.8L20 11l-6.1 2.2L12 19l-1.9-5.8L4 11l6.1-2.2L12 3Zm7 12 .9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15Z",
@@ -772,6 +775,7 @@ function App({ userName, userEmail, onSignOut, onUpdateUserName }: { userName: s
           {page === "Dashboard" && <Dashboard data={data} metrics={metrics} userName={displayName} syncState={syncState} onQuick={addQuick} onPage={setPage} onActivity={(item) => openDetail(item.recordType as Kind, item.recordId)} />}
           {page === "Meetings" && <MeetingsPage contacts={data.contacts} />}
           {page === "Calls" && <Suspense fallback={<section className="panel call-history-loading">Loading calls…</section>}><CallsPage contacts={data.contacts} companies={data.companies} onOpenRecord={(kind, id) => openDetail(kind, id)} /></Suspense>}
+          {page === "SMS" && <Suspense fallback={<section className="panel call-history-loading">Loading SMS tools…</section>}><SmsPage contacts={data.contacts} onOpenContact={(id) => openDetail("contact", id)} /></Suspense>}
 
           {currentKind && <section className="panel records-panel">
             <div className="panel-toolbar">
@@ -831,6 +835,7 @@ const pageDescriptions: Record<Page, string> = {
   Opportunities: "Move potential work forward with a clear pipeline.",
   "Tasks & Follow-ups": "Keep your next steps visible and close the loop.",
   Calls: "Dial a number, link calls to contacts, and review call outcomes.",
+  SMS: "Send an individual text to a CRM contact and review message history.",
   Meetings: "Confirmed Cal.com bookings and upcoming conversations with contacts.",
   Activities: "A chronological view of what has changed across your CRM.",
   Settings: "Set up your workspace and tailor the CRM to your team.",
